@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Any
 
@@ -73,6 +74,59 @@ async def get_documents(
 
     return documents
 
+async def search_document_candidates(
+    keywords: list[str],
+    category: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """
+    Retrieve active documents that contain at least one keyword
+    in their title, content, or tags.
+    """
+    query: dict[str, Any] = {"is_active": True}
+
+    if category:
+        query["category"] = category
+
+    search_conditions: list[dict[str, Any]] = []
+
+    for keyword in keywords:
+        safe_keyword = re.escape(keyword)
+
+        search_conditions.extend(
+            [
+                {
+                    "title": {
+                        "$regex": safe_keyword,
+                        "$options": "i",
+                    }
+                },
+                {
+                    "content": {
+                        "$regex": safe_keyword,
+                        "$options": "i",
+                    }
+                },
+                {
+                    "tags": {
+                        "$regex": safe_keyword,
+                        "$options": "i",
+                    }
+                },
+            ]
+        )
+
+    if search_conditions:
+        query["$or"] = search_conditions
+
+    cursor = collection.find(query).limit(limit)
+
+    documents: list[dict[str, Any]] = []
+
+    async for document in cursor:
+        documents.append(document_helper(document))
+
+    return documents
 
 async def get_document_by_id(document_id: str) -> dict[str, Any] | None:
     if not ObjectId.is_valid(document_id):

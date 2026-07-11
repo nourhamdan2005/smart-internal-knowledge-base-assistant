@@ -1,14 +1,12 @@
 from app.ai.openai_client import generate_answer
-from app.repositories.document_repository import get_documents
+from app.repositories.search_repository import search_documents
 
 
 async def query_documents(question: str, category: str | None = None):
-    documents = await get_documents(
+    documents = await search_documents(
+        question=question,
         category=category,
-        search=question,
-        page=1,
         limit=5,
-        sort="-created_at",
     )
 
     if not documents:
