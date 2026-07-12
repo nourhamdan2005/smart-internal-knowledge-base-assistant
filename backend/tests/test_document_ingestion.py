@@ -61,8 +61,8 @@ async def test_extract_text_rejects_empty_file():
 @pytest.mark.asyncio
 async def test_extract_text_rejects_unsupported_extension():
     file = UploadFile(
-        filename="policy.pdf",
-        file=BytesIO(b"fake pdf"),
+        filename="policy.csv",
+        file=BytesIO(b"fake csv"),
     )
 
     with pytest.raises(
@@ -78,3 +78,25 @@ def test_create_title_from_filename():
     )
 
     assert result == "Remote Work Policy"
+
+
+@pytest.mark.asyncio
+async def test_process_uploaded_document_returns_create_schema():
+    file = UploadFile(
+        filename="remote_work-policy.md",
+        file=BytesIO(b"Employees may work remotely."),
+    )
+
+    result = await document_ingestion_service.process_uploaded_document(
+        file=file,
+        category="HR",
+        tags="remote, policy",
+    )
+
+    assert result.model_dump() == {
+        "title": "Remote Work Policy",
+        "category": "HR",
+        "content": "Employees may work remotely.",
+        "tags": ["remote", "policy"],
+        "author": "Admin",
+    }
