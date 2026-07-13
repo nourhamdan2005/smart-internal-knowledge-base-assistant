@@ -1,5 +1,4 @@
-﻿
-from fastapi import (
+﻿from fastapi import (
     APIRouter,
     File,
     Form,
@@ -8,11 +7,18 @@ from fastapi import (
     status,
 )
 
+from app.repositories.document_chunk_repository import (
+    create_document_chunks,
+)
 from app.repositories.document_repository import (
     create_document,
     find_document_by_checksum,
 )
 from app.schemas.document import DocumentResponse
+from app.schemas.document_chunk import DocumentChunkCreate
+from app.services.document_chunking_service import (
+    chunk_document_text,
+)
 from app.services.document_ingestion_service import (
     DocumentIngestionError,
     process_uploaded_document,
@@ -37,8 +43,8 @@ async def upload_document(
     """
     Upload a TXT, Markdown, PDF, or DOCX document.
 
-    The uploaded file is validated, its text is extracted, and its
-    SHA-256 checksum is checked to prevent duplicate active documents.
+    The uploaded file is validated, checked for duplicates,
+    stored in MongoDB, and split into searchable chunks.
     """
     try:
         document_data = await process_uploaded_document(
@@ -50,10 +56,11 @@ async def upload_document(
         )
 
         if not document_data.checksum:
-           raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="The uploaded file checksum could not be generated.",
-    )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="The uploaded file checksum could not be generated.",
+            )
+
         duplicate_document = await find_document_by_checksum(
             document_data.checksum,
         )
@@ -68,6 +75,27 @@ async def upload_document(
             )
 
         created_document = await create_document(document_data)
+
+        raw_chunks = chunk_document_text(
+            text=created_document["content"],
+        )
+
+        chunk_models = [
+            DocumentChunkCreate(
+                document_id=created_document["id"],
+                chunk_index=int(chunk["chunk_index"]),
+                content=str(chunk["content"]),
+                start_character=int(chunk["start_character"]),
+                end_character=int(chunk["end_character"]),
+                character_count=int(chunk["character_count"]),
+                category=created_document["category"],
+                document_title=created_document["title"],
+                is_active=True,
+            )
+            for chunk in raw_chunks
+        ]
+
+        await create_document_chunks(chunk_models)
 
         return DocumentResponse(**created_document)
 
