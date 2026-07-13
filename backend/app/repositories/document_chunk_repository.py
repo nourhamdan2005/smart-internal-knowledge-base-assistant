@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Any
 
@@ -94,3 +95,54 @@ async def deactivate_chunks_by_document_id(
     )
 
     return result.modified_count
+async def search_chunk_candidates(
+    keywords: list[str],
+    category: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """
+    Retrieve active chunks containing at least one keyword
+    in their document title or content.
+    """
+    if not keywords:
+        return []
+
+    query: dict[str, Any] = {
+        "is_active": True,
+    }
+
+    if category:
+        query["category"] = category
+
+    search_conditions: list[dict[str, Any]] = []
+
+    for keyword in keywords:
+        safe_keyword = re.escape(keyword)
+
+        search_conditions.extend(
+            [
+                {
+                    "document_title": {
+                        "$regex": safe_keyword,
+                        "$options": "i",
+                    }
+                },
+                {
+                    "content": {
+                        "$regex": safe_keyword,
+                        "$options": "i",
+                    }
+                },
+            ]
+        )
+
+    query["$or"] = search_conditions
+
+    cursor = collection.find(query).limit(limit)
+
+    chunks: list[dict[str, Any]] = []
+
+    async for chunk in cursor:
+        chunks.append(chunk_helper(chunk))
+
+    return chunks

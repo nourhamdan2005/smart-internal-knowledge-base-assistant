@@ -1,7 +1,9 @@
 import re
 from typing import Any
 
-from app.repositories.document_repository import search_document_candidates
+from app.repositories.document_chunk_repository import (
+    search_chunk_candidates,
+)
 
 
 STOP_WORDS = {
@@ -51,7 +53,10 @@ STOP_WORDS = {
 
 
 def extract_keywords(question: str) -> list[str]:
-    words = re.findall(r"[a-zA-Z0-9]+", question.lower())
+    words = re.findall(
+        r"[a-zA-Z0-9]+",
+        question.lower(),
+    )
 
     keywords = [
         word
@@ -62,27 +67,24 @@ def extract_keywords(question: str) -> list[str]:
     return list(dict.fromkeys(keywords))
 
 
-def calculate_relevance_score(
-    document: dict[str, Any],
+def calculate_chunk_relevance_score(
+    chunk: dict[str, Any],
     keywords: list[str],
     original_question: str,
 ) -> int:
-    title = str(document.get("title", "")).lower()
-    content = str(document.get("content", "")).lower()
+    document_title = str(
+        chunk.get("document_title", "")
+    ).lower()
 
-    tags = [
-        str(tag).lower()
-        for tag in document.get("tags", [])
-    ]
+    content = str(
+        chunk.get("content", "")
+    ).lower()
 
     score = 0
 
     for keyword in keywords:
-        if keyword in title:
+        if keyword in document_title:
             score += 10
-
-        if any(keyword in tag for tag in tags):
-            score += 6
 
         if keyword in content:
             score += 2
@@ -94,13 +96,21 @@ def calculate_relevance_score(
         )
     )
 
-    if normalized_question and normalized_question in title:
+    if (
+        normalized_question
+        and normalized_question in document_title
+    ):
         score += 20
 
     if normalized_question and normalized_question in content:
         score += 10
 
-    searchable_text = " ".join([title, content, *tags])
+    searchable_text = " ".join(
+        [
+            document_title,
+            content,
+        ]
+    )
 
     if keywords and all(
         keyword in searchable_text
@@ -111,7 +121,7 @@ def calculate_relevance_score(
     return score
 
 
-async def search_documents(
+async def search_chunks(
     question: str,
     category: str | None = None,
     limit: int = 5,
@@ -132,20 +142,20 @@ async def search_documents(
     if not keywords:
         return []
 
-    candidates = await search_document_candidates(
+    candidates = await search_chunk_candidates(
         keywords=keywords,
         category=category,
         limit=50,
     )
 
-    ranked_documents = sorted(
+    ranked_chunks = sorted(
         candidates,
-        key=lambda document: calculate_relevance_score(
-            document=document,
+        key=lambda chunk: calculate_chunk_relevance_score(
+            chunk=chunk,
             keywords=keywords,
             original_question=cleaned_question,
         ),
         reverse=True,
     )
 
-    return ranked_documents[:limit]
+    return ranked_chunks[:limit]

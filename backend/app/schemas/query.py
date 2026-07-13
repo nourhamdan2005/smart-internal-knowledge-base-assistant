@@ -7,6 +7,8 @@ class QueryRequest(BaseModel):
 
 
 class QuerySource(BaseModel):
+    chunk_id: str
+    chunk_index: int
     document_id: str
     title: str
     category: str

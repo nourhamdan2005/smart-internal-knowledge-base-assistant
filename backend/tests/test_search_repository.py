@@ -2,7 +2,7 @@ import pytest
 
 from app.repositories import search_repository
 from app.repositories.search_repository import (
-    calculate_relevance_score,
+    calculate_chunk_relevance_score,
     extract_keywords,
 )
 
@@ -31,7 +31,7 @@ def test_extract_keywords_removes_duplicates():
     ]
 
 
-def test_extract_keywords_returns_empty_list_for_only_stop_words():
+def test_extract_keywords_returns_empty_for_only_stop_words():
     result = extract_keywords(
         "What is it and how do I do it?"
     )
@@ -39,21 +39,17 @@ def test_extract_keywords_returns_empty_list_for_only_stop_words():
     assert result == []
 
 
-def test_remote_policy_document_has_positive_score():
-    document = {
-        "title": "Remote Work Policy",
+def test_relevant_chunk_has_positive_score():
+    chunk = {
+        "document_title": "Remote Work Policy",
         "content": (
             "Employees may work remotely "
             "with manager approval."
         ),
-        "tags": [
-            "remote",
-            "policy",
-        ],
     }
 
-    score = calculate_relevance_score(
-        document=document,
+    score = calculate_chunk_relevance_score(
+        chunk=chunk,
         keywords=[
             "remote",
             "work",
@@ -67,33 +63,25 @@ def test_remote_policy_document_has_positive_score():
     assert score > 0
 
 
-def test_relevant_document_scores_higher_than_unrelated_document():
-    relevant_document = {
-        "title": "Remote Work Policy",
+def test_relevant_chunk_scores_higher_than_unrelated_chunk():
+    relevant_chunk = {
+        "document_title": "Remote Work Policy",
         "content": (
             "Employees may work remotely "
             "with manager approval."
         ),
-        "tags": [
-            "remote",
-            "policy",
-        ],
     }
 
-    unrelated_document = {
-        "title": "Password Reset Guide",
+    unrelated_chunk = {
+        "document_title": "Password Reset Guide",
         "content": (
             "Employees should contact IT "
             "to reset their passwords."
         ),
-        "tags": [
-            "password",
-            "IT",
-        ],
     }
 
-    relevant_score = calculate_relevance_score(
-        document=relevant_document,
+    relevant_score = calculate_chunk_relevance_score(
+        chunk=relevant_chunk,
         keywords=[
             "remote",
             "work",
@@ -104,8 +92,8 @@ def test_relevant_document_scores_higher_than_unrelated_document():
         ),
     )
 
-    unrelated_score = calculate_relevance_score(
-        document=unrelated_document,
+    unrelated_score = calculate_chunk_relevance_score(
+        chunk=unrelated_chunk,
         keywords=[
             "remote",
             "work",
@@ -120,38 +108,35 @@ def test_relevant_document_scores_higher_than_unrelated_document():
 
 
 @pytest.mark.asyncio
-async def test_search_documents_ranks_candidates(
+async def test_search_chunks_ranks_candidates(
     monkeypatch,
 ):
     candidates = [
         {
-            "id": "2",
-            "title": "Password Reset Guide",
+            "id": "chunk-2",
+            "document_id": "document-2",
+            "chunk_index": 0,
+            "document_title": "Password Reset Guide",
             "category": "IT",
             "content": (
                 "Employees should contact IT "
                 "to reset their passwords."
             ),
-            "tags": [
-                "password",
-            ],
         },
         {
-            "id": "1",
-            "title": "Remote Work Policy",
+            "id": "chunk-1",
+            "document_id": "document-1",
+            "chunk_index": 0,
+            "document_title": "Remote Work Policy",
             "category": "HR",
             "content": (
                 "Employees may work remotely "
                 "with manager approval."
             ),
-            "tags": [
-                "remote",
-                "policy",
-            ],
         },
     ]
 
-    async def fake_search_document_candidates(
+    async def fake_search_chunk_candidates(
         keywords,
         category=None,
         limit=50,
@@ -168,28 +153,28 @@ async def test_search_documents_ranks_candidates(
 
     monkeypatch.setattr(
         search_repository,
-        "search_document_candidates",
-        fake_search_document_candidates,
+        "search_chunk_candidates",
+        fake_search_chunk_candidates,
     )
 
-    result = await search_repository.search_documents(
+    result = await search_repository.search_chunks(
         question="What is the remote work policy?",
         category="HR",
         limit=1,
     )
 
     assert len(result) == 1
-    assert result[0]["id"] == "1"
-    assert result[0]["title"] == (
+    assert result[0]["id"] == "chunk-1"
+    assert result[0]["document_title"] == (
         "Remote Work Policy"
     )
 
 
 @pytest.mark.asyncio
-async def test_search_documents_returns_empty_for_blank_question(
+async def test_search_chunks_returns_empty_for_blank_question(
     monkeypatch,
 ):
-    async def fake_search_document_candidates(
+    async def fake_search_chunk_candidates(
         keywords,
         category=None,
         limit=50,
@@ -201,11 +186,11 @@ async def test_search_documents_returns_empty_for_blank_question(
 
     monkeypatch.setattr(
         search_repository,
-        "search_document_candidates",
-        fake_search_document_candidates,
+        "search_chunk_candidates",
+        fake_search_chunk_candidates,
     )
 
-    result = await search_repository.search_documents(
+    result = await search_repository.search_chunks(
         question="   ",
         category="HR",
     )
@@ -214,10 +199,10 @@ async def test_search_documents_returns_empty_for_blank_question(
 
 
 @pytest.mark.asyncio
-async def test_search_documents_returns_empty_when_no_candidates(
+async def test_search_chunks_returns_empty_when_no_candidates(
     monkeypatch,
 ):
-    async def fake_search_document_candidates(
+    async def fake_search_chunk_candidates(
         keywords,
         category=None,
         limit=50,
@@ -226,11 +211,11 @@ async def test_search_documents_returns_empty_when_no_candidates(
 
     monkeypatch.setattr(
         search_repository,
-        "search_document_candidates",
-        fake_search_document_candidates,
+        "search_chunk_candidates",
+        fake_search_chunk_candidates,
     )
 
-    result = await search_repository.search_documents(
+    result = await search_repository.search_chunks(
         question="What is the remote work policy?",
         category="HR",
     )
