@@ -1,12 +1,24 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import documents, health, query, uploads
+from app.api.v1.endpoints import (
+    documents,
+    health,
+    maintenance,
+    query,
+    uploads,
+)
 
 api_router = APIRouter()
 
 api_router.include_router(
     health.router,
     tags=["Health"],
+)
+
+api_router.include_router(
+    maintenance.router,
+    prefix="/maintenance",
+    tags=["Maintenance"],
 )
 
 api_router.include_router(

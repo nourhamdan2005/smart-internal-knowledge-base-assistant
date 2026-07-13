@@ -278,3 +278,20 @@ async def find_document_by_checksum(
         return None
 
     return document_helper(document)
+
+async def get_all_active_documents() -> list[dict[str, Any]]:
+    """
+    Return all active documents for maintenance operations.
+    """
+    cursor = collection.find(
+        {
+            "is_active": True,
+        }
+    )
+
+    documents: list[dict[str, Any]] = []
+
+    async for document in cursor:
+        documents.append(document_helper(document))
+
+    return documents

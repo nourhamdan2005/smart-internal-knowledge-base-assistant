@@ -146,3 +146,18 @@ async def search_chunk_candidates(
         chunks.append(chunk_helper(chunk))
 
     return chunks
+async def get_document_ids_with_active_chunks() -> set[str]:
+    """
+    Return document IDs that already have active chunks.
+    """
+    document_ids = await collection.distinct(
+        "document_id",
+        {
+            "is_active": True,
+        },
+    )
+
+    return {
+        str(document_id)
+        for document_id in document_ids
+    }

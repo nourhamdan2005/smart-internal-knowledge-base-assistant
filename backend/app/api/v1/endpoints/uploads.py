@@ -1,4 +1,5 @@
-﻿from fastapi import (
+﻿
+from fastapi import (
     APIRouter,
     File,
     Form,
@@ -7,17 +8,13 @@
     status,
 )
 
-from app.repositories.document_chunk_repository import (
-    create_document_chunks,
-)
 from app.repositories.document_repository import (
     create_document,
     find_document_by_checksum,
 )
 from app.schemas.document import DocumentResponse
-from app.schemas.document_chunk import DocumentChunkCreate
-from app.services.document_chunking_service import (
-    chunk_document_text,
+from app.services.document_chunk_service import (
+    create_chunks_for_document,
 )
 from app.services.document_ingestion_service import (
     DocumentIngestionError,
@@ -43,8 +40,8 @@ async def upload_document(
     """
     Upload a TXT, Markdown, PDF, or DOCX document.
 
-    The uploaded file is validated, checked for duplicates,
-    stored in MongoDB, and split into searchable chunks.
+    The file is validated, checked for duplicates, stored in MongoDB,
+    and split into smaller searchable chunks.
     """
     try:
         document_data = await process_uploaded_document(
@@ -74,28 +71,13 @@ async def upload_document(
                 ),
             )
 
-        created_document = await create_document(document_data)
-
-        raw_chunks = chunk_document_text(
-            text=created_document["content"],
+        created_document = await create_document(
+            document_data
         )
 
-        chunk_models = [
-            DocumentChunkCreate(
-                document_id=created_document["id"],
-                chunk_index=int(chunk["chunk_index"]),
-                content=str(chunk["content"]),
-                start_character=int(chunk["start_character"]),
-                end_character=int(chunk["end_character"]),
-                character_count=int(chunk["character_count"]),
-                category=created_document["category"],
-                document_title=created_document["title"],
-                is_active=True,
-            )
-            for chunk in raw_chunks
-        ]
-
-        await create_document_chunks(chunk_models)
+        await create_chunks_for_document(
+            created_document,
+        )
 
         return DocumentResponse(**created_document)
 
@@ -104,3 +86,4 @@ async def upload_document(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+
