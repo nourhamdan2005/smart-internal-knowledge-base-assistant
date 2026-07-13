@@ -1,3 +1,4 @@
+﻿
 import re
 from datetime import datetime
 from typing import Any
@@ -7,10 +8,14 @@ from bson import ObjectId
 from app.core.database import database
 from app.schemas.document import DocumentCreate, DocumentUpdate
 
+
 collection = database["documents"]
 
 
 def document_helper(document: dict[str, Any]) -> dict[str, Any]:
+    """
+    Convert a MongoDB document into an API-friendly dictionary.
+    """
     return {
         "id": str(document["_id"]),
         "title": document["title"],
@@ -21,10 +26,21 @@ def document_helper(document: dict[str, Any]) -> dict[str, Any]:
         "is_active": document.get("is_active", True),
         "created_at": document["created_at"],
         "updated_at": document["updated_at"],
+        "original_filename": document.get("original_filename"),
+        "extension": document.get("extension"),
+        "mime_type": document.get("mime_type"),
+        "file_size": document.get("file_size"),
+        "checksum": document.get("checksum"),
+        "uploaded_at": document.get("uploaded_at"),
     }
 
 
-async def create_document(document_data: DocumentCreate) -> dict[str, Any]:
+async def create_document(
+    document_data: DocumentCreate,
+) -> dict[str, Any]:
+    """
+    Create a new active knowledge-base document.
+    """
     now = datetime.utcnow()
 
     document = document_data.model_dump()
@@ -33,7 +49,10 @@ async def create_document(document_data: DocumentCreate) -> dict[str, Any]:
     document["updated_at"] = now
 
     result = await collection.insert_one(document)
-    created_document = await collection.find_one({"_id": result.inserted_id})
+
+    created_document = await collection.find_one(
+        {"_id": result.inserted_id}
+    )
 
     return document_helper(created_document)
 
@@ -45,16 +64,39 @@ async def get_documents(
     limit: int = 10,
     sort: str = "-created_at",
 ) -> list[dict[str, Any]]:
-    query: dict[str, Any] = {"is_active": True}
+    """
+    Return active documents with optional filtering, search,
+    pagination, and sorting.
+    """
+    query: dict[str, Any] = {
+        "is_active": True,
+    }
 
     if category:
         query["category"] = category
 
     if search:
+        safe_search = re.escape(search)
+
         query["$or"] = [
-            {"title": {"$regex": search, "$options": "i"}},
-            {"content": {"$regex": search, "$options": "i"}},
-            {"tags": {"$regex": search, "$options": "i"}},
+            {
+                "title": {
+                    "$regex": safe_search,
+                    "$options": "i",
+                }
+            },
+            {
+                "content": {
+                    "$regex": safe_search,
+                    "$options": "i",
+                }
+            },
+            {
+                "tags": {
+                    "$regex": safe_search,
+                    "$options": "i",
+                }
+            },
         ]
 
     sort_field = sort.lstrip("-")
@@ -67,12 +109,13 @@ async def get_documents(
         .limit(limit)
     )
 
-    documents = []
+    documents: list[dict[str, Any]] = []
 
     async for document in cursor:
         documents.append(document_helper(document))
 
     return documents
+
 
 async def search_document_candidates(
     keywords: list[str],
@@ -80,10 +123,12 @@ async def search_document_candidates(
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     """
-    Retrieve active documents that contain at least one keyword
+    Retrieve active documents containing at least one keyword
     in their title, content, or tags.
     """
-    query: dict[str, Any] = {"is_active": True}
+    query: dict[str, Any] = {
+        "is_active": True,
+    }
 
     if category:
         query["category"] = category
@@ -128,7 +173,13 @@ async def search_document_candidates(
 
     return documents
 
-async def get_document_by_id(document_id: str) -> dict[str, Any] | None:
+
+async def get_document_by_id(
+    document_id: str,
+) -> dict[str, Any] | None:
+    """
+    Return one active document by its MongoDB ObjectId.
+    """
     if not ObjectId.is_valid(document_id):
         return None
 
@@ -139,7 +190,7 @@ async def get_document_by_id(document_id: str) -> dict[str, Any] | None:
         }
     )
 
-    if not document:
+    if document is None:
         return None
 
     return document_helper(document)
@@ -149,30 +200,56 @@ async def update_document(
     document_id: str,
     document_data: DocumentUpdate,
 ) -> dict[str, Any] | None:
+    """
+    Update an active document.
+    """
     if not ObjectId.is_valid(document_id):
         return None
 
-    update_data = document_data.model_dump(exclude_unset=True)
+    update_data = document_data.model_dump(
+        exclude_unset=True,
+    )
     update_data["updated_at"] = datetime.utcnow()
 
     result = await collection.update_one(
-        {"_id": ObjectId(document_id), "is_active": True},
-        {"$set": update_data},
+        {
+            "_id": ObjectId(document_id),
+            "is_active": True,
+        },
+        {
+            "$set": update_data,
+        },
     )
 
     if result.matched_count == 0:
         return None
 
-    updated_document = await collection.find_one({"_id": ObjectId(document_id)})
+    updated_document = await collection.find_one(
+        {
+            "_id": ObjectId(document_id),
+        }
+    )
+
+    if updated_document is None:
+        return None
+
     return document_helper(updated_document)
 
 
-async def delete_document(document_id: str) -> bool:
+async def delete_document(
+    document_id: str,
+) -> bool:
+    """
+    Soft-delete a document by setting is_active to False.
+    """
     if not ObjectId.is_valid(document_id):
         return False
 
     result = await collection.update_one(
-        {"_id": ObjectId(document_id), "is_active": True},
+        {
+            "_id": ObjectId(document_id),
+            "is_active": True,
+        },
         {
             "$set": {
                 "is_active": False,
@@ -182,3 +259,22 @@ async def delete_document(document_id: str) -> bool:
     )
 
     return result.matched_count > 0
+
+
+async def find_document_by_checksum(
+    checksum: str,
+) -> dict[str, Any] | None:
+    """
+    Find an active document with the same uploaded-file checksum.
+    """
+    document = await collection.find_one(
+        {
+            "checksum": checksum,
+            "is_active": True,
+        }
+    )
+
+    if document is None:
+        return None
+
+    return document_helper(document)

@@ -1,3 +1,6 @@
+
+import hashlib
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -24,7 +27,7 @@ class DocumentIngestionError(Exception):
 
 def get_file_extension(filename: str | None) -> str:
     """
-    Return the lowercase file extension.
+    Return the lowercase extension of an uploaded filename.
 
     Example:
         policy.PDF -> .pdf
@@ -37,7 +40,13 @@ def get_file_extension(filename: str | None) -> str:
 
 def validate_file_extension(filename: str | None) -> str:
     """
-    Validate that the uploaded file type is supported.
+    Validate that the uploaded file has a supported extension.
+
+    Returns:
+        The normalized lowercase extension.
+
+    Raises:
+        DocumentIngestionError: If the extension is unsupported.
     """
     extension = get_file_extension(filename)
 
@@ -50,23 +59,46 @@ def validate_file_extension(filename: str | None) -> str:
     return extension
 
 
+def validate_file_size(file_bytes: bytes) -> None:
+    """
+    Validate that the uploaded file is not empty and does not exceed
+    the configured maximum size.
+    """
+    if not file_bytes:
+        raise DocumentIngestionError("The uploaded file is empty.")
+
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise DocumentIngestionError(
+            "The uploaded file exceeds the maximum allowed size of 5 MB."
+        )
+
+
 def extract_text_from_txt_or_markdown(file_bytes: bytes) -> str:
     """
-    Extract UTF-8 text from TXT or Markdown content.
+    Extract UTF-8 text from a TXT or Markdown file.
 
-    utf-8-sig removes an optional UTF-8 BOM.
+    utf-8-sig supports regular UTF-8 and removes an optional BOM.
     """
     try:
-        return file_bytes.decode("utf-8-sig").strip()
+        extracted_text = file_bytes.decode("utf-8-sig").strip()
     except UnicodeDecodeError as exc:
         raise DocumentIngestionError(
             "The uploaded text file must use UTF-8 encoding."
         ) from exc
 
+    if not extracted_text:
+        raise DocumentIngestionError(
+            "No readable text was found in the uploaded file."
+        )
+
+    return extracted_text
+
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     """
-    Extract readable text from all pages of a PDF.
+    Extract readable text from all pages of a text-based PDF.
+
+    Image-only or scanned PDFs require OCR and are rejected for now.
     """
     try:
         reader = PdfReader(BytesIO(file_bytes))
@@ -79,12 +111,12 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
     for page in reader.pages:
         try:
-            text = page.extract_text()
+            page_text = page.extract_text()
         except Exception:
-            text = None
+            page_text = None
 
-        if text and text.strip():
-            page_texts.append(text.strip())
+        if page_text and page_text.strip():
+            page_texts.append(page_text.strip())
 
     extracted_text = "\n\n".join(page_texts).strip()
 
@@ -99,7 +131,7 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
 def extract_text_from_docx(file_bytes: bytes) -> str:
     """
-    Extract text from DOCX paragraphs and tables.
+    Extract readable text from DOCX paragraphs and tables.
     """
     try:
         document = Document(BytesIO(file_bytes))
@@ -111,10 +143,10 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     extracted_parts: list[str] = []
 
     for paragraph in document.paragraphs:
-        text = paragraph.text.strip()
+        paragraph_text = paragraph.text.strip()
 
-        if text:
-            extracted_parts.append(text)
+        if paragraph_text:
+            extracted_parts.append(paragraph_text)
 
     for table in document.tables:
         for row in table.rows:
@@ -137,9 +169,12 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     return extracted_text
 
 
-def extract_text_from_file(file_bytes: bytes, extension: str) -> str:
+def extract_text_from_file(
+    file_bytes: bytes,
+    extension: str,
+) -> str:
     """
-    Choose the correct extractor according to the file extension.
+    Select the correct text extractor based on the file extension.
     """
     if extension in {".txt", ".md"}:
         return extract_text_from_txt_or_markdown(file_bytes)
@@ -153,30 +188,36 @@ def extract_text_from_file(file_bytes: bytes, extension: str) -> str:
     raise DocumentIngestionError("Unsupported file type.")
 
 
-async def extract_text_from_upload(file: UploadFile) -> str:
-    """Validate an upload and return its extracted text."""
+async def read_and_validate_upload(
+    file: UploadFile,
+) -> tuple[bytes, str]:
+    """
+    Read an upload once and perform common validation.
+
+    Returns:
+        A tuple containing:
+        - the uploaded file bytes
+        - the normalized file extension
+    """
     extension = validate_file_extension(file.filename)
     file_bytes = await file.read()
 
-    if not file_bytes:
-        raise DocumentIngestionError("The uploaded file is empty.")
+    validate_file_size(file_bytes)
 
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise DocumentIngestionError(
-            "The uploaded file exceeds the maximum allowed size of 5 MB."
-        )
+    return file_bytes, extension
 
-    extracted_text = extract_text_from_file(
+
+async def extract_text_from_upload(file: UploadFile) -> str:
+    """
+    Backward-compatible helper that validates an upload and returns
+    only its extracted text.
+    """
+    file_bytes, extension = await read_and_validate_upload(file)
+
+    return extract_text_from_file(
         file_bytes=file_bytes,
         extension=extension,
     )
-
-    if not extracted_text.strip():
-        raise DocumentIngestionError(
-            "No readable text was found in the uploaded file."
-        )
-
-    return extracted_text
 
 
 def generate_title_from_filename(filename: str | None) -> str:
@@ -190,38 +231,45 @@ def generate_title_from_filename(filename: str | None) -> str:
         return "Untitled Document"
 
     stem = Path(filename).stem
-    normalized = stem.replace("_", " ").replace("-", " ")
-    generated_title = " ".join(normalized.split()).title()
+    normalized_stem = stem.replace("_", " ").replace("-", " ")
+    generated_title = " ".join(normalized_stem.split()).title()
 
     return generated_title or "Untitled Document"
 
 
 def create_title_from_filename(filename: str | None) -> str:
-    """Backward-compatible alias for generating an upload title."""
+    """
+    Backward-compatible alias for generate_title_from_filename().
+    """
     return generate_title_from_filename(filename)
 
 
-def parse_tags(tags: str | None) -> list[str]:
+def parse_tags(tags: str | list[str] | None) -> list[str]:
     """
-    Convert comma-separated tags into a clean list.
+    Normalize comma-separated tags or an existing tag list.
 
-    Example:
-        'remote, policy, employees'
-        -> ['remote', 'policy', 'employees']
+    Examples:
+        "remote, policy, employees"
+        -> ["remote", "policy", "employees"]
+
+        ["remote", "policy"]
+        -> ["remote", "policy"]
     """
     if not tags:
         return []
 
+    raw_tags = tags if isinstance(tags, list) else tags.split(",")
+
     parsed_tags: list[str] = []
     seen_tags: set[str] = set()
 
-    for tag in tags.split(","):
+    for tag in raw_tags:
         cleaned_tag = tag.strip()
 
         if not cleaned_tag:
             continue
 
-        normalized_tag = cleaned_tag.lower()
+        normalized_tag = cleaned_tag.casefold()
 
         if normalized_tag in seen_tags:
             continue
@@ -232,18 +280,30 @@ def parse_tags(tags: str | None) -> list[str]:
     return parsed_tags
 
 
+def calculate_checksum(file_bytes: bytes) -> str:
+    """
+    Calculate the SHA-256 checksum of an uploaded file.
+    """
+    return hashlib.sha256(file_bytes).hexdigest()
+
+
 async def process_uploaded_document(
     file: UploadFile,
     category: str,
     title: str | None = None,
-    tags: str | None = None,
+    tags: str | list[str] | None = None,
     author: str = "Admin",
 ) -> DocumentCreate:
     """
-    Validate an uploaded document, extract its text, and build the
-    document data that will be stored in MongoDB.
+    Validate an uploaded document, extract its text, calculate its
+    checksum, and build the MongoDB document payload.
     """
-    extracted_text = await extract_text_from_upload(file)
+    file_bytes, extension = await read_and_validate_upload(file)
+
+    extracted_text = extract_text_from_file(
+        file_bytes=file_bytes,
+        extension=extension,
+    )
 
     document_title = (
         title.strip()
@@ -251,10 +311,44 @@ async def process_uploaded_document(
         else generate_title_from_filename(file.filename)
     )
 
+    normalized_category = category.strip()
+
+    if not normalized_category:
+        raise DocumentIngestionError(
+            "The document category cannot be empty."
+        )
+
+    uploaded_at = datetime.now(timezone.utc)
+
     return DocumentCreate(
         title=document_title,
-        category=category.strip(),
+        category=normalized_category,
         content=extracted_text,
         tags=parse_tags(tags),
         author=author.strip() or "Admin",
+        original_filename=file.filename,
+        extension=extension,
+        mime_type=file.content_type,
+        file_size=len(file_bytes),
+        checksum=calculate_checksum(file_bytes),
+        uploaded_at=uploaded_at,
+    )
+
+
+async def ingest_document(
+    file: UploadFile,
+    category: str,
+    title: str | None = None,
+    tags: str | list[str] | None = None,
+    author: str = "Admin",
+) -> DocumentCreate:
+    """
+    Backward-compatible alias for process_uploaded_document().
+    """
+    return await process_uploaded_document(
+        file=file,
+        category=category,
+        title=title,
+        tags=tags,
+        author=author,
     )

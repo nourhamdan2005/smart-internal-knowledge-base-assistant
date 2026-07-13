@@ -93,10 +93,13 @@ async def test_process_uploaded_document_returns_create_schema():
         tags="remote, policy",
     )
 
-    assert result.model_dump() == {
-        "title": "Remote Work Policy",
-        "category": "HR",
-        "content": "Employees may work remotely.",
-        "tags": ["remote", "policy"],
-        "author": "Admin",
-    }
+    assert result.title == "Remote Work Policy"
+    assert result.category == "HR"
+    assert result.content == "Employees may work remotely."
+    assert result.tags == ["remote", "policy"]
+    assert result.author == "Admin"
+    assert result.original_filename == "remote_work-policy.md"
+    assert result.extension == ".md"
+    assert result.file_size == 28
+    assert result.checksum
+    assert result.uploaded_at

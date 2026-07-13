@@ -23,6 +23,12 @@ class DocumentCreate(BaseModel):
     content: str = Field(..., min_length=10)
     tags: list[str] = []
     author: str = Field(default="Admin", max_length=100)
+    original_filename: str | None = None
+    extension: str | None = None
+    mime_type: str | None = None
+    file_size: int | None = Field(default=None, ge=0)
+    checksum: str | None = None
+    uploaded_at: datetime | None = None
 
 
 class DocumentUpdate(BaseModel):
@@ -44,3 +50,9 @@ class DocumentResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    original_filename: str | None = None
+    extension: str | None = None
+    mime_type: str | None = None
+    file_size: int | None = None
+    checksum: str | None = None
+    uploaded_at: datetime | None = None
