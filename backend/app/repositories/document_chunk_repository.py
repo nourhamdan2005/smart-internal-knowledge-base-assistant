@@ -95,6 +95,27 @@ async def deactivate_chunks_by_document_id(
     )
 
     return result.modified_count
+async def reactivate_chunks_by_document_id(
+    document_id: str,
+) -> int:
+    """
+    Reactivate chunks during lifecycle rollback.
+    """
+    result = await collection.update_many(
+        {
+            "document_id": document_id,
+            "is_active": False,
+        },
+        {
+            "$set": {
+                "is_active": True,
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    return result.modified_count
+
 async def search_chunk_candidates(
     keywords: list[str],
     category: str | None = None,

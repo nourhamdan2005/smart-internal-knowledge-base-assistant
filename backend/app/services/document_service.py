@@ -1,11 +1,38 @@
 from typing import Any
 
 from app.repositories import document_repository
+from app.repositories.document_chunk_repository import (
+    deactivate_chunks_by_document_id,
+    reactivate_chunks_by_document_id,
+)
 from app.schemas.document import DocumentCreate, DocumentUpdate
+from app.services.document_chunk_service import (
+    create_chunks_for_document,
+)
 
 
-async def create_document(document_data: DocumentCreate) -> dict[str, Any]:
-    return await document_repository.create_document(document_data)
+async def create_document(
+    document_data: DocumentCreate,
+) -> dict[str, Any]:
+    """
+    Create a document and its chunks.
+
+    If chunk creation fails, remove the newly created document
+    so the database is not left in an incomplete state.
+    """
+    document = await document_repository.create_document(
+        document_data
+    )
+
+    try:
+        await create_chunks_for_document(document)
+    except Exception:
+        await document_repository.hard_delete_document(
+            document["id"]
+        )
+        raise
+
+    return document
 
 
 async def get_documents(
@@ -24,16 +51,94 @@ async def get_documents(
     )
 
 
-async def get_document_by_id(document_id: str) -> dict[str, Any] | None:
-    return await document_repository.get_document_by_id(document_id)
+async def get_document_by_id(
+    document_id: str,
+) -> dict[str, Any] | None:
+    return await document_repository.get_document_by_id(
+        document_id
+    )
 
 
 async def update_document(
     document_id: str,
     document_data: DocumentUpdate,
 ) -> dict[str, Any] | None:
-    return await document_repository.update_document(document_id, document_data)
+    """
+    Update a document and regenerate its chunks.
+
+    If fresh chunk creation fails, restore the document and its
+    previously active chunks.
+    """
+    original_document = (
+        await document_repository.get_document_by_id(
+            document_id
+        )
+    )
+
+    if original_document is None:
+        return None
+
+    updated_document = await document_repository.update_document(
+        document_id,
+        document_data,
+    )
+
+    if updated_document is None:
+        return None
+
+    try:
+        await deactivate_chunks_by_document_id(document_id)
+
+        if updated_document["is_active"]:
+            await create_chunks_for_document(updated_document)
+
+    except Exception:
+        await document_repository.restore_document_snapshot(
+            document_id,
+            original_document,
+        )
+
+        await reactivate_chunks_by_document_id(document_id)
+
+        raise
+
+    return updated_document
 
 
-async def delete_document(document_id: str) -> bool:
-    return await document_repository.delete_document(document_id)
+async def delete_document(
+    document_id: str,
+) -> bool:
+    """
+    Soft-delete a document and deactivate all related chunks.
+
+    If chunk deactivation fails, restore the original document.
+    """
+    original_document = (
+        await document_repository.get_document_by_id(
+            document_id
+        )
+    )
+
+    if original_document is None:
+        return False
+
+    deleted = await document_repository.delete_document(
+        document_id
+    )
+
+    if not deleted:
+        return False
+
+    try:
+        await deactivate_chunks_by_document_id(document_id)
+    except Exception:
+        await document_repository.restore_document_snapshot(
+            document_id,
+            original_document,
+        )
+
+        await reactivate_chunks_by_document_id(document_id)
+
+        raise
+
+    return True

@@ -295,3 +295,55 @@ async def get_all_active_documents() -> list[dict[str, Any]]:
         documents.append(document_helper(document))
 
     return documents
+
+async def hard_delete_document(
+    document_id: str,
+) -> bool:
+    """
+    Permanently remove a document during failed creation rollback.
+
+    This should only be used internally when document creation
+    succeeds but chunk creation fails.
+    """
+    if not ObjectId.is_valid(document_id):
+        return False
+
+    result = await collection.delete_one(
+        {
+            "_id": ObjectId(document_id),
+        }
+    )
+
+    return result.deleted_count > 0
+
+
+async def restore_document_snapshot(
+    document_id: str,
+    document: dict[str, Any],
+) -> bool:
+    """
+    Restore a document to its state before a failed lifecycle operation.
+    """
+    if not ObjectId.is_valid(document_id):
+        return False
+
+    restore_data = {
+        "title": document["title"],
+        "category": document["category"],
+        "content": document["content"],
+        "tags": document.get("tags", []),
+        "author": document.get("author", "Admin"),
+        "is_active": document.get("is_active", True),
+        "updated_at": document["updated_at"],
+    }
+
+    result = await collection.update_one(
+        {
+            "_id": ObjectId(document_id),
+        },
+        {
+            "$set": restore_data,
+        },
+    )
+
+    return result.matched_count > 0
