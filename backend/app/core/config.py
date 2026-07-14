@@ -9,7 +9,9 @@ class Settings(BaseSettings):
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
-
+    retrieval_top_k: int = 5
+    retrieval_min_score: int = 8
+    retrieval_candidate_limit: int = 50
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",

@@ -12,6 +12,7 @@ class QuerySource(BaseModel):
     document_id: str
     title: str
     category: str
+    excerpt: str
 
 
 class QueryResponse(BaseModel):

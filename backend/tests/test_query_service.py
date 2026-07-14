@@ -7,6 +7,12 @@ from app.services import query_service
 async def test_query_documents_uses_chunks_as_context(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        query_service.settings,
+        "retrieval_top_k",
+        8,
+    )
+
     chunks = [
         {
             "id": "chunk-1",
@@ -88,6 +94,10 @@ async def test_query_documents_uses_chunks_as_context(
             "document_id": "document-1",
             "title": "Remote Work Policy",
             "category": "HR",
+            "excerpt": (
+                "Employees may work remotely "
+                "with manager approval."
+            ),
         },
         {
             "chunk_id": "chunk-2",
@@ -95,6 +105,10 @@ async def test_query_documents_uses_chunks_as_context(
             "document_id": "document-1",
             "title": "Remote Work Policy",
             "category": "HR",
+            "excerpt": (
+                "Remote employees must remain "
+                "available during working hours."
+            ),
         },
     ]
 
@@ -144,3 +158,44 @@ async def test_query_documents_returns_fallback_when_no_chunks(
         ),
         "sources": [],
     }
+
+
+def test_create_source_excerpt_returns_short_content():
+    content = "Employees must use MFA."
+
+    result = query_service.create_source_excerpt(content)
+
+    assert result == content
+
+
+def test_create_source_excerpt_normalizes_whitespace():
+    content = (
+        "Employees   must\nuse\tmulti-factor "
+        "authentication."
+    )
+
+    result = query_service.create_source_excerpt(content)
+
+    assert result == (
+        "Employees must use multi-factor "
+        "authentication."
+    )
+
+
+def test_create_source_excerpt_shortens_long_content():
+    content = (
+        "Employees must use multi-factor "
+        "authentication for every company "
+        "account and must never share their "
+        "authentication codes with another "
+        "employee or external person."
+    )
+
+    result = query_service.create_source_excerpt(
+        content,
+        max_length=80,
+    )
+
+    assert len(result) <= 83
+    assert result.endswith("...")
+    assert not result.endswith(" ...")

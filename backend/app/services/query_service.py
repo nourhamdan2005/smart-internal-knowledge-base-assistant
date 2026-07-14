@@ -1,5 +1,41 @@
+import re
+
 from app.ai.openai_client import generate_answer
+from app.core.config import settings
 from app.repositories.search_repository import search_chunks
+
+
+SOURCE_EXCERPT_LENGTH = 180
+
+
+def create_source_excerpt(
+    content: str,
+    max_length: int = SOURCE_EXCERPT_LENGTH,
+) -> str:
+    """
+    Create a clean, shortened excerpt for a query source.
+    """
+    normalized_content = re.sub(
+        r"\s+",
+        " ",
+        content,
+    ).strip()
+
+    if len(normalized_content) <= max_length:
+        return normalized_content
+
+    shortened_content = normalized_content[
+        :max_length
+    ].rstrip()
+
+    last_space = shortened_content.rfind(" ")
+
+    if last_space > 0:
+        shortened_content = shortened_content[
+            :last_space
+        ]
+
+    return f"{shortened_content}..."
 
 
 async def query_documents(
@@ -9,7 +45,7 @@ async def query_documents(
     chunks = await search_chunks(
         question=question,
         category=category,
-        limit=8,
+        limit=settings.retrieval_top_k,
     )
 
     if not chunks:
@@ -48,6 +84,9 @@ async def query_documents(
             "document_id": chunk["document_id"],
             "title": chunk["document_title"],
             "category": chunk["category"],
+            "excerpt": create_source_excerpt(
+                chunk["content"]
+            ),
         }
         for chunk in chunks
     ]
