@@ -20,11 +20,15 @@ def chunk_helper(chunk: dict[str, Any]) -> dict[str, Any]:
         "character_count": chunk["character_count"],
         "category": chunk["category"],
         "document_title": chunk["document_title"],
+        "embedding": chunk.get("embedding"),
+        "embedding_model": chunk.get("embedding_model"),
+        "embedding_dimensions": chunk.get(
+            "embedding_dimensions"
+        ),
         "is_active": chunk.get("is_active", True),
         "created_at": chunk["created_at"],
         "updated_at": chunk["updated_at"],
     }
-
 
 async def create_document_chunks(
     chunks: list[DocumentChunkCreate],
@@ -182,3 +186,57 @@ async def get_document_ids_with_active_chunks() -> set[str]:
         str(document_id)
         for document_id in document_ids
     }
+
+async def get_all_active_chunks() -> list[dict[str, Any]]:
+    """
+    Return all active chunks, including chunks with and without
+    stored embeddings.
+    """
+    cursor = collection.find(
+        {
+            "is_active": True,
+        }
+    ).sort(
+        [
+            ("document_id", 1),
+            ("chunk_index", 1),
+        ]
+    )
+
+    chunks: list[dict[str, Any]] = []
+
+    async for chunk in cursor:
+        chunks.append(chunk_helper(chunk))
+
+    return chunks
+
+
+async def update_chunk_embedding(
+    chunk_id: str,
+    embedding: list[float],
+    embedding_model: str,
+) -> bool:
+    """
+    Store embedding metadata on one active chunk.
+    """
+    from bson import ObjectId
+
+    if not ObjectId.is_valid(chunk_id):
+        return False
+
+    result = await collection.update_one(
+        {
+            "_id": ObjectId(chunk_id),
+            "is_active": True,
+        },
+        {
+            "$set": {
+                "embedding": embedding,
+                "embedding_model": embedding_model,
+                "embedding_dimensions": len(embedding),
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    return result.matched_count > 0
