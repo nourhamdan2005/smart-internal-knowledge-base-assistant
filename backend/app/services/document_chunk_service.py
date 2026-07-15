@@ -1,5 +1,7 @@
 from typing import Any
 
+from app.ai.embedding_client import generate_embedding
+from app.core.config import settings
 from app.repositories.document_chunk_repository import (
     create_document_chunks,
 )
@@ -13,31 +15,50 @@ async def create_chunks_for_document(
     document: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """
-    Generate and store chunks for one document.
+    Generate chunks, create embeddings, and store them.
     """
     raw_chunks = chunk_document_text(
         text=document["content"],
     )
 
-    chunk_models = [
-        DocumentChunkCreate(
-            document_id=document["id"],
-            chunk_index=int(chunk["chunk_index"]),
-            content=str(chunk["content"]),
-            start_character=int(
-                chunk["start_character"]
-            ),
-            end_character=int(
-                chunk["end_character"]
-            ),
-            character_count=int(
-                chunk["character_count"]
-            ),
-            category=document["category"],
-            document_title=document["title"],
-            is_active=True,
-        )
-        for chunk in raw_chunks
-    ]
+    chunk_models: list[DocumentChunkCreate] = []
 
-    return await create_document_chunks(chunk_models)
+    for chunk in raw_chunks:
+        chunk_content = str(chunk["content"])
+
+        embedding = await generate_embedding(
+            chunk_content
+        )
+
+        chunk_models.append(
+            DocumentChunkCreate(
+                document_id=document["id"],
+                chunk_index=int(
+                    chunk["chunk_index"]
+                ),
+                content=chunk_content,
+                start_character=int(
+                    chunk["start_character"]
+                ),
+                end_character=int(
+                    chunk["end_character"]
+                ),
+                character_count=int(
+                    chunk["character_count"]
+                ),
+                category=document["category"],
+                document_title=document["title"],
+                embedding=embedding,
+                embedding_model=(
+                    settings.embedding_model
+                ),
+                embedding_dimensions=len(
+                    embedding
+                ),
+                is_active=True,
+            )
+        )
+
+    return await create_document_chunks(
+        chunk_models
+    )

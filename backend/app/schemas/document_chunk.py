@@ -12,6 +12,11 @@ class DocumentChunkCreate(BaseModel):
     character_count: int
     category: str
     document_title: str
+
+    embedding: list[float] | None = None
+    embedding_model: str | None = None
+    embedding_dimensions: int | None = None
+
     is_active: bool = True
 
 
@@ -22,4 +27,6 @@ class DocumentChunkResponse(DocumentChunkCreate):
 
 
 class DocumentChunkList(BaseModel):
-    chunks: list[DocumentChunkResponse] = Field(default_factory=list)
+    chunks: list[DocumentChunkResponse] = Field(
+        default_factory=list
+    )

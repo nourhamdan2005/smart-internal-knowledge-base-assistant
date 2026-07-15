@@ -7,15 +7,14 @@ from fastapi import (
     UploadFile,
     status,
 )
-
 from app.repositories.document_repository import (
-    create_document,
     find_document_by_checksum,
 )
-from app.schemas.document import DocumentResponse
-from app.services.document_chunk_service import (
-    create_chunks_for_document,
+from app.services.document_service import (
+    create_document,
 )
+
+from app.schemas.document import DocumentResponse
 from app.services.document_ingestion_service import (
     DocumentIngestionError,
     process_uploaded_document,
@@ -75,9 +74,7 @@ async def upload_document(
             document_data
         )
 
-        await create_chunks_for_document(
-            created_document,
-        )
+        
 
         return DocumentResponse(**created_document)
 
