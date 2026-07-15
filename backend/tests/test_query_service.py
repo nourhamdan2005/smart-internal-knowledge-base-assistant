@@ -38,7 +38,7 @@ async def test_query_documents_uses_chunks_as_context(
         },
     ]
 
-    async def fake_search_chunks(
+    async def fake_hybrid_search_chunks(
         question,
         category=None,
         limit=5,
@@ -68,8 +68,8 @@ async def test_query_documents_uses_chunks_as_context(
 
     monkeypatch.setattr(
         query_service,
-        "search_chunks",
-        fake_search_chunks,
+        "hybrid_search_chunks",
+        fake_hybrid_search_chunks,
     )
 
     monkeypatch.setattr(
@@ -117,7 +117,7 @@ async def test_query_documents_uses_chunks_as_context(
 async def test_query_documents_returns_fallback_when_no_chunks(
     monkeypatch,
 ):
-    async def fake_search_chunks(
+    async def fake_hybrid_search_chunks(
         question,
         category=None,
         limit=5,
@@ -135,8 +135,8 @@ async def test_query_documents_returns_fallback_when_no_chunks(
 
     monkeypatch.setattr(
         query_service,
-        "search_chunks",
-        fake_search_chunks,
+        "hybrid_search_chunks",
+        fake_hybrid_search_chunks,
     )
 
     monkeypatch.setattr(

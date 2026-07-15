@@ -2,7 +2,9 @@ import re
 
 from app.ai.openai_client import generate_answer
 from app.core.config import settings
-from app.repositories.search_repository import search_chunks
+from app.repositories.search_repository import (
+    hybrid_search_chunks,
+)
 
 
 SOURCE_EXCERPT_LENGTH = 180
@@ -42,7 +44,7 @@ async def query_documents(
     question: str,
     category: str | None = None,
 ):
-    chunks = await search_chunks(
+    chunks = await hybrid_search_chunks(
         question=question,
         category=category,
         limit=settings.retrieval_top_k,

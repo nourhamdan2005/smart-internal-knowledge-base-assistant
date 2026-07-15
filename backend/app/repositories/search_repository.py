@@ -1,8 +1,10 @@
+import math
 import re
 from typing import Any
-
+from app.ai.embedding_client import generate_embedding
 from app.core.config import settings
 from app.repositories.document_chunk_repository import (
+    get_active_chunks_with_embeddings,
     search_chunk_candidates,
 )
 
@@ -219,7 +221,7 @@ def normalize_chunk_tokens(
     content: str,
 ) -> set[str]:
     """
-    Convert content into normalized tokens for similarity checks.
+    Convert chunk content into normalized tokens for similarity checks.
     """
     ignored_tokens = STOP_WORDS | {
         "all",
@@ -365,6 +367,257 @@ def select_diverse_chunks(
             break
 
     return selected_chunks
+
+def calculate_cosine_similarity(
+    first_vector: list[float],
+    second_vector: list[float],
+) -> float:
+    """
+    Calculate cosine similarity between two embedding vectors.
+
+    Returns 0 when either vector is empty, dimensions differ,
+    or one vector has zero magnitude.
+    """
+    if not first_vector or not second_vector:
+        return 0.0
+
+    if len(first_vector) != len(second_vector):
+        return 0.0
+
+    dot_product = sum(
+        first_value * second_value
+        for first_value, second_value in zip(
+            first_vector,
+            second_vector,
+        )
+    )
+
+    first_magnitude = math.sqrt(
+        sum(value * value for value in first_vector)
+    )
+
+    second_magnitude = math.sqrt(
+        sum(value * value for value in second_vector)
+    )
+
+    if first_magnitude == 0 or second_magnitude == 0:
+        return 0.0
+
+    similarity = dot_product / (
+        first_magnitude * second_magnitude
+    )
+
+    return max(
+        -1.0,
+        min(1.0, similarity),
+    )
+
+
+def normalize_keyword_score(
+    keyword_score: int,
+) -> float:
+    """
+    Convert the open-ended keyword score into a 0–1 value.
+    """
+    if keyword_score <= 0:
+        return 0.0
+
+    return min(
+        keyword_score / 100,
+        1.0,
+    )
+
+
+def calculate_hybrid_score(
+    keyword_score: int,
+    semantic_similarity: float,
+) -> float:
+    """
+    Combine normalized keyword relevance and semantic similarity.
+    """
+    normalized_keyword_score = normalize_keyword_score(
+        keyword_score
+    )
+
+    normalized_semantic_score = max(
+        0.0,
+        semantic_similarity,
+    )
+
+    total_weight = (
+        settings.hybrid_keyword_weight
+        + settings.hybrid_semantic_weight
+    )
+
+    if total_weight <= 0:
+        return 0.0
+
+    weighted_score = (
+        normalized_keyword_score
+        * settings.hybrid_keyword_weight
+        + normalized_semantic_score
+        * settings.hybrid_semantic_weight
+    )
+
+    return weighted_score / total_weight
+
+
+def merge_chunk_candidates(
+    keyword_candidates: list[dict[str, Any]],
+    semantic_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Merge candidate lists without returning the same chunk twice.
+    """
+    merged_candidates: dict[
+        str,
+        dict[str, Any],
+    ] = {}
+
+    for chunk in [
+        *keyword_candidates,
+        *semantic_candidates,
+    ]:
+        chunk_id = str(chunk.get("id", ""))
+
+        if not chunk_id:
+            continue
+
+        existing_chunk = merged_candidates.get(
+            chunk_id
+        )
+
+        if existing_chunk is None:
+            merged_candidates[chunk_id] = chunk
+            continue
+
+        merged_chunk = {
+            **existing_chunk,
+            **chunk,
+        }
+
+        merged_candidates[chunk_id] = merged_chunk
+
+    return list(merged_candidates.values())
+
+
+async def hybrid_search_chunks(
+    question: str,
+    category: str | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Combine keyword and semantic retrieval into one ranked result.
+
+    Keyword search remains available as a fallback when the
+    embedding service cannot generate a query vector.
+    """
+    cleaned_question = question.strip()
+
+    if not cleaned_question:
+        return []
+
+    result_limit = (
+        limit
+        if limit is not None
+        else settings.retrieval_top_k
+    )
+
+    try:
+        question_embedding = await generate_embedding(
+            cleaned_question
+        )
+    except Exception:
+        return await search_chunks(
+            question=cleaned_question,
+            category=category,
+            limit=result_limit,
+        )
+
+    keywords = extract_keywords(cleaned_question)
+
+    if not keywords:
+        keywords = re.findall(
+            r"[a-zA-Z0-9]+",
+            cleaned_question.lower(),
+        )
+
+    keyword_candidates = await search_chunk_candidates(
+        keywords=keywords,
+        category=category,
+        limit=settings.retrieval_candidate_limit,
+    )
+
+    semantic_candidates = (
+        await get_active_chunks_with_embeddings(
+            category=category,
+            limit=settings.semantic_candidate_limit,
+        )
+    )
+
+    candidates = merge_chunk_candidates(
+        keyword_candidates=keyword_candidates,
+        semantic_candidates=semantic_candidates,
+    )
+
+    scored_chunks: list[
+        tuple[float, dict[str, Any]]
+    ] = []
+
+    for chunk in candidates:
+        keyword_score = calculate_chunk_relevance_score(
+            chunk=chunk,
+            keywords=keywords,
+            original_question=cleaned_question,
+        )
+
+        chunk_embedding = chunk.get("embedding")
+
+        semantic_similarity = (
+            calculate_cosine_similarity(
+                question_embedding,
+                chunk_embedding,
+            )
+            if isinstance(chunk_embedding, list)
+            else 0.0
+        )
+
+        if (
+            keyword_score < settings.retrieval_min_score
+            and semantic_similarity
+            < settings.semantic_min_similarity
+        ):
+            continue
+
+        hybrid_score = calculate_hybrid_score(
+            keyword_score=keyword_score,
+            semantic_similarity=semantic_similarity,
+        )
+
+        scored_chunk = {
+            **chunk,
+            "keyword_score": keyword_score,
+            "semantic_similarity": semantic_similarity,
+            "hybrid_score": hybrid_score,
+        }
+
+        scored_chunks.append(
+            (
+                hybrid_score,
+                scored_chunk,
+            )
+        )
+
+    scored_chunks.sort(
+        key=lambda item: item[0],
+        reverse=True,
+    )
+
+    return select_diverse_chunks(
+        scored_chunks=scored_chunks,
+        limit=result_limit,
+    )
+
 
 async def search_chunks(
     question: str,

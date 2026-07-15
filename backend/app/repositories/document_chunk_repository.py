@@ -1,6 +1,7 @@
 import re
 from datetime import datetime
 from typing import Any
+from bson import ObjectId
 
 from app.core.database import database
 from app.schemas.document_chunk import DocumentChunkCreate
@@ -240,3 +241,47 @@ async def update_chunk_embedding(
     )
 
     return result.matched_count > 0
+
+async def get_active_chunks_with_embeddings(
+    category: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """
+    Return active chunks that contain a valid stored embedding.
+    """
+    query: dict[str, Any] = {
+        "is_active": True,
+        "embedding": {
+            "$type": "array",
+            "$ne": [],
+        },
+        "embedding_model": {
+            "$exists": True,
+            "$ne": None,
+        },
+        "embedding_dimensions": {
+            "$exists": True,
+            "$gt": 0,
+        },
+    }
+
+    if category:
+        query["category"] = category
+
+    cursor = (
+        collection.find(query)
+        .sort(
+            [
+                ("document_id", 1),
+                ("chunk_index", 1),
+            ]
+        )
+        .limit(limit)
+    )
+
+    chunks: list[dict[str, Any]] = []
+
+    async for chunk in cursor:
+        chunks.append(chunk_helper(chunk))
+
+    return chunks

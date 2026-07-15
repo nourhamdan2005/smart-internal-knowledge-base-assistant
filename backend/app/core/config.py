@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     retrieval_max_chunks_per_document: int = 2
     retrieval_overlap_threshold: float = 0.65
     retrieval_similarity_threshold: float = 0.85
+    hybrid_keyword_weight: float = 0.4
+    hybrid_semantic_weight: float = 0.6
+    semantic_min_similarity: float = 0.25
+    semantic_candidate_limit: int = 100
 
     model_config = SettingsConfigDict(
         env_file=".env",
