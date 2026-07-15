@@ -9,12 +9,15 @@ class Settings(BaseSettings):
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
+    embedding_model: str = "nomic-embed-text"
+
     retrieval_top_k: int = 5
     retrieval_min_score: int = 8
     retrieval_candidate_limit: int = 50
     retrieval_max_chunks_per_document: int = 2
     retrieval_overlap_threshold: float = 0.65
     retrieval_similarity_threshold: float = 0.85
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
