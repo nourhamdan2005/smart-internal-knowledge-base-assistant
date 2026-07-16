@@ -83,6 +83,42 @@ async def get_chunks_by_document_id(
     return chunks
 
 
+async def get_active_chunks_by_ids(
+    chunk_ids: list[str],
+    category: str | None = None,
+) -> list[dict[str, Any]]:
+    """Hydrate active MongoDB chunks by their public IDs."""
+    object_ids = [
+        ObjectId(chunk_id)
+        for chunk_id in dict.fromkeys(chunk_ids)
+        if ObjectId.is_valid(chunk_id)
+    ]
+
+    if not object_ids:
+        return []
+
+    query: dict[str, Any] = {
+        "_id": {"$in": object_ids},
+        "is_active": True,
+    }
+
+    if category:
+        query["category"] = category
+
+    cursor = collection.find(query)
+    chunks_by_id: dict[str, dict[str, Any]] = {}
+
+    async for chunk in cursor:
+        hydrated_chunk = chunk_helper(chunk)
+        chunks_by_id[hydrated_chunk["id"]] = hydrated_chunk
+
+    return [
+        chunks_by_id[chunk_id]
+        for chunk_id in chunk_ids
+        if chunk_id in chunks_by_id
+    ]
+
+
 async def deactivate_chunks_by_document_id(
     document_id: str,
 ) -> int:
@@ -100,6 +136,35 @@ async def deactivate_chunks_by_document_id(
     )
 
     return result.modified_count
+async def deactivate_chunks_by_ids(
+    chunk_ids: list[str],
+) -> int:
+    """Deactivate selected chunks during lifecycle rollback."""
+    object_ids = [
+        ObjectId(chunk_id)
+        for chunk_id in dict.fromkeys(chunk_ids)
+        if ObjectId.is_valid(chunk_id)
+    ]
+
+    if not object_ids:
+        return 0
+
+    result = await collection.update_many(
+        {
+            "_id": {"$in": object_ids},
+            "is_active": True,
+        },
+        {
+            "$set": {
+                "is_active": False,
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    return result.modified_count
+
+
 async def reactivate_chunks_by_document_id(
     document_id: str,
 ) -> int:

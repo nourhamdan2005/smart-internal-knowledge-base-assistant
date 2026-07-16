@@ -1,12 +1,23 @@
 import math
+import logging
 import re
 from typing import Any
+
 from app.ai.embedding_client import generate_embedding
 from app.core.config import settings
 from app.repositories.document_chunk_repository import (
+    get_active_chunks_by_ids,
     get_active_chunks_with_embeddings,
     search_chunk_candidates,
 )
+from app.vectorstores.base import (
+    VectorStoreError,
+    VectorStoreUnavailableError,
+)
+from app.vectorstores.factory import get_vector_store
+
+
+logger = logging.getLogger(__name__)
 
 
 STOP_WORDS = {
@@ -548,12 +559,112 @@ async def hybrid_search_chunks(
         limit=settings.retrieval_candidate_limit,
     )
 
-    semantic_candidates = (
-        await get_active_chunks_with_embeddings(
+    semantic_candidates: list[dict[str, Any]] = []
+
+    if settings.qdrant_enabled:
+        try:
+            store = get_vector_store()
+
+            if store is None:
+                raise VectorStoreUnavailableError(
+                    "The configured vector store is unavailable."
+                )
+
+            vector_results = await store.search(
+                embedding=question_embedding,
+                category=category,
+                limit=settings.qdrant_semantic_limit,
+            )
+            scores_by_chunk_id: dict[str, float] = {}
+
+            for result in vector_results:
+                existing_score = scores_by_chunk_id.get(
+                    result.chunk_id
+                )
+
+                if (
+                    existing_score is None
+                    or result.score > existing_score
+                ):
+                    scores_by_chunk_id[result.chunk_id] = (
+                        result.score
+                    )
+
+            hydrated_chunks = await get_active_chunks_by_ids(
+                list(scores_by_chunk_id),
+                category=category,
+            )
+
+            semantic_candidates = [
+                {
+                    **chunk,
+                    "semantic_similarity": (
+                        scores_by_chunk_id[chunk["id"]]
+                    ),
+                }
+                for chunk in hydrated_chunks
+                if chunk["id"] in scores_by_chunk_id
+            ]
+        except (VectorStoreError, TimeoutError, ConnectionError) as exc:
+            if not settings.qdrant_fallback_enabled:
+                if isinstance(exc, VectorStoreError):
+                    raise
+
+                raise VectorStoreUnavailableError(
+                    "Semantic vector search is unavailable."
+                ) from exc
+
+            logger.warning(
+                "Qdrant semantic retrieval failed; using local "
+                "semantic fallback",
+                exc_info=True,
+            )
+
+            semantic_candidates = []
+
+            stored_chunks = await get_active_chunks_with_embeddings(
+                category=category,
+                limit=settings.semantic_candidate_limit,
+            )
+
+            for chunk in stored_chunks:
+                chunk_embedding = chunk.get("embedding")
+                similarity = (
+                    calculate_cosine_similarity(
+                        question_embedding,
+                        chunk_embedding,
+                    )
+                    if isinstance(chunk_embedding, list)
+                    else 0.0
+                )
+                semantic_candidates.append(
+                    {
+                        **chunk,
+                        "semantic_similarity": similarity,
+                    }
+                )
+    else:
+        stored_chunks = await get_active_chunks_with_embeddings(
             category=category,
             limit=settings.semantic_candidate_limit,
         )
-    )
+
+        for chunk in stored_chunks:
+            chunk_embedding = chunk.get("embedding")
+            similarity = (
+                calculate_cosine_similarity(
+                    question_embedding,
+                    chunk_embedding,
+                )
+                if isinstance(chunk_embedding, list)
+                else 0.0
+            )
+            semantic_candidates.append(
+                {
+                    **chunk,
+                    "semantic_similarity": similarity,
+                }
+            )
 
     candidates = merge_chunk_candidates(
         keyword_candidates=keyword_candidates,
@@ -571,15 +682,8 @@ async def hybrid_search_chunks(
             original_question=cleaned_question,
         )
 
-        chunk_embedding = chunk.get("embedding")
-
-        semantic_similarity = (
-            calculate_cosine_similarity(
-                question_embedding,
-                chunk_embedding,
-            )
-            if isinstance(chunk_embedding, list)
-            else 0.0
+        semantic_similarity = float(
+            chunk.get("semantic_similarity", 0.0)
         )
 
         if (
@@ -609,7 +713,12 @@ async def hybrid_search_chunks(
         )
 
     scored_chunks.sort(
-        key=lambda item: item[0],
+        key=lambda item: (
+            item[0],
+            item[1]["semantic_similarity"],
+            item[1]["keyword_score"],
+            -int(item[1].get("chunk_index", 0)),
+        ),
         reverse=True,
     )
 

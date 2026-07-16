@@ -17,6 +17,7 @@ def test_fastapi_application_loads_all_routes():
         "/maintenance/backfill-chunks"
         in route_paths
     )
+    assert "/maintenance/backfill-vectors" in route_paths
 
 
 @pytest.mark.asyncio

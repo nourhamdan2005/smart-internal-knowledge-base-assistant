@@ -1,0 +1,1 @@
+Employees must activate multi-factor authentication before accessing company cloud systems.
