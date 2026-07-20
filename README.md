@@ -2,7 +2,7 @@
 
 > **An AI-powered internal knowledge assistant for enterprise document retrieval using Retrieval-Augmented Generation (RAG).**
 
-CGC Knowledge AI is a production-ready web application that enables employees to search, browse, and chat with internal company knowledge using natural language. The platform ingests company documents, automatically extracts and chunks their content, generates semantic embeddings, indexes them in a vector database, and uses a local Large Language Model (LLM) to generate grounded answers with source citations.
+CGC Knowledge AI is an enterprise-oriented web application that enables employees to search, browse, and chat with internal company knowledge using natural language. The platform ingests company documents, automatically extracts and chunks their content, generates semantic embeddings, indexes them in a vector database, and uses a local Large Language Model (LLM) to generate grounded answers with source citations.
 
 The system was developed to reduce the time employees spend searching for internal documentation while minimizing repetitive IT and HR support requests.
 
@@ -373,6 +373,10 @@ The project was validated using both automated and manual testing.
 - Frontend linting
 - TypeScript validation
 - Production build verification
+- 194 backend tests passed
+- Frontend lint passed
+- TypeScript validation passed
+- Production build passed
 
 ## Manual Testing
 

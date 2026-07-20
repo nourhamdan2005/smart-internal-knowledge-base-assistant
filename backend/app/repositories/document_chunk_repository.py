@@ -1,0 +1,352 @@
+import re
+from datetime import datetime
+from typing import Any
+from bson import ObjectId
+
+from app.core.database import database
+from app.schemas.document_chunk import DocumentChunkCreate
+
+
+collection = database["document_chunks"]
+
+
+def chunk_helper(chunk: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(chunk["_id"]),
+        "document_id": chunk["document_id"],
+        "chunk_index": chunk["chunk_index"],
+        "content": chunk["content"],
+        "start_character": chunk["start_character"],
+        "end_character": chunk["end_character"],
+        "character_count": chunk["character_count"],
+        "category": chunk["category"],
+        "document_title": chunk["document_title"],
+        "embedding": chunk.get("embedding"),
+        "embedding_model": chunk.get("embedding_model"),
+        "embedding_dimensions": chunk.get(
+            "embedding_dimensions"
+        ),
+        "is_active": chunk.get("is_active", True),
+        "created_at": chunk["created_at"],
+        "updated_at": chunk["updated_at"],
+    }
+
+async def create_document_chunks(
+    chunks: list[DocumentChunkCreate],
+) -> list[dict[str, Any]]:
+    if not chunks:
+        return []
+
+    now = datetime.utcnow()
+
+    chunk_documents = []
+
+    for chunk in chunks:
+        chunk_document = chunk.model_dump()
+        chunk_document["created_at"] = now
+        chunk_document["updated_at"] = now
+        chunk_documents.append(chunk_document)
+
+    result = await collection.insert_many(chunk_documents)
+
+    created_chunks = []
+
+    cursor = collection.find(
+        {
+            "_id": {
+                "$in": result.inserted_ids,
+            }
+        }
+    ).sort("chunk_index", 1)
+
+    async for chunk in cursor:
+        created_chunks.append(chunk_helper(chunk))
+
+    return created_chunks
+
+
+async def get_chunks_by_document_id(
+    document_id: str,
+) -> list[dict[str, Any]]:
+    cursor = collection.find(
+        {
+            "document_id": document_id,
+            "is_active": True,
+        }
+    ).sort("chunk_index", 1)
+
+    chunks = []
+
+    async for chunk in cursor:
+        chunks.append(chunk_helper(chunk))
+
+    return chunks
+
+
+async def get_active_chunks_by_ids(
+    chunk_ids: list[str],
+    category: str | None = None,
+) -> list[dict[str, Any]]:
+    """Hydrate active MongoDB chunks by their public IDs."""
+    object_ids = [
+        ObjectId(chunk_id)
+        for chunk_id in dict.fromkeys(chunk_ids)
+        if ObjectId.is_valid(chunk_id)
+    ]
+
+    if not object_ids:
+        return []
+
+    query: dict[str, Any] = {
+        "_id": {"$in": object_ids},
+        "is_active": True,
+    }
+
+    if category:
+        query["category"] = category
+
+    cursor = collection.find(query)
+    chunks_by_id: dict[str, dict[str, Any]] = {}
+
+    async for chunk in cursor:
+        hydrated_chunk = chunk_helper(chunk)
+        chunks_by_id[hydrated_chunk["id"]] = hydrated_chunk
+
+    return [
+        chunks_by_id[chunk_id]
+        for chunk_id in chunk_ids
+        if chunk_id in chunks_by_id
+    ]
+
+
+async def deactivate_chunks_by_document_id(
+    document_id: str,
+) -> int:
+    result = await collection.update_many(
+        {
+            "document_id": document_id,
+            "is_active": True,
+        },
+        {
+            "$set": {
+                "is_active": False,
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    return result.modified_count
+async def deactivate_chunks_by_ids(
+    chunk_ids: list[str],
+) -> int:
+    """Deactivate selected chunks during lifecycle rollback."""
+    object_ids = [
+        ObjectId(chunk_id)
+        for chunk_id in dict.fromkeys(chunk_ids)
+        if ObjectId.is_valid(chunk_id)
+    ]
+
+    if not object_ids:
+        return 0
+
+    result = await collection.update_many(
+        {
+            "_id": {"$in": object_ids},
+            "is_active": True,
+        },
+        {
+            "$set": {
+                "is_active": False,
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    return result.modified_count
+
+
+async def reactivate_chunks_by_document_id(
+    document_id: str,
+) -> int:
+    """
+    Reactivate chunks during lifecycle rollback.
+    """
+    result = await collection.update_many(
+        {
+            "document_id": document_id,
+            "is_active": False,
+        },
+        {
+            "$set": {
+                "is_active": True,
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    return result.modified_count
+
+async def search_chunk_candidates(
+    keywords: list[str],
+    category: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """
+    Retrieve active chunks containing at least one keyword
+    in their document title or content.
+    """
+    if not keywords:
+        return []
+
+    query: dict[str, Any] = {
+        "is_active": True,
+    }
+
+    if category:
+        query["category"] = category
+
+    search_conditions: list[dict[str, Any]] = []
+
+    for keyword in keywords:
+        safe_keyword = re.escape(keyword)
+
+        search_conditions.extend(
+            [
+                {
+                    "document_title": {
+                        "$regex": safe_keyword,
+                        "$options": "i",
+                    }
+                },
+                {
+                    "content": {
+                        "$regex": safe_keyword,
+                        "$options": "i",
+                    }
+                },
+            ]
+        )
+
+    query["$or"] = search_conditions
+
+    cursor = collection.find(query).limit(limit)
+
+    chunks: list[dict[str, Any]] = []
+
+    async for chunk in cursor:
+        chunks.append(chunk_helper(chunk))
+
+    return chunks
+async def get_document_ids_with_active_chunks() -> set[str]:
+    """
+    Return document IDs that already have active chunks.
+    """
+    document_ids = await collection.distinct(
+        "document_id",
+        {
+            "is_active": True,
+        },
+    )
+
+    return {
+        str(document_id)
+        for document_id in document_ids
+    }
+
+async def get_all_active_chunks() -> list[dict[str, Any]]:
+    """
+    Return all active chunks, including chunks with and without
+    stored embeddings.
+    """
+    cursor = collection.find(
+        {
+            "is_active": True,
+        }
+    ).sort(
+        [
+            ("document_id", 1),
+            ("chunk_index", 1),
+        ]
+    )
+
+    chunks: list[dict[str, Any]] = []
+
+    async for chunk in cursor:
+        chunks.append(chunk_helper(chunk))
+
+    return chunks
+
+
+async def update_chunk_embedding(
+    chunk_id: str,
+    embedding: list[float],
+    embedding_model: str,
+) -> bool:
+    """
+    Store embedding metadata on one active chunk.
+    """
+    from bson import ObjectId
+
+    if not ObjectId.is_valid(chunk_id):
+        return False
+
+    result = await collection.update_one(
+        {
+            "_id": ObjectId(chunk_id),
+            "is_active": True,
+        },
+        {
+            "$set": {
+                "embedding": embedding,
+                "embedding_model": embedding_model,
+                "embedding_dimensions": len(embedding),
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    return result.matched_count > 0
+
+async def get_active_chunks_with_embeddings(
+    category: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """
+    Return active chunks that contain a valid stored embedding.
+    """
+    query: dict[str, Any] = {
+        "is_active": True,
+        "embedding": {
+            "$type": "array",
+            "$ne": [],
+        },
+        "embedding_model": {
+            "$exists": True,
+            "$ne": None,
+        },
+        "embedding_dimensions": {
+            "$exists": True,
+            "$gt": 0,
+        },
+    }
+
+    if category:
+        query["category"] = category
+
+    cursor = (
+        collection.find(query)
+        .sort(
+            [
+                ("document_id", 1),
+                ("chunk_index", 1),
+            ]
+        )
+        .limit(limit)
+    )
+
+    chunks: list[dict[str, Any]] = []
+
+    async for chunk in cursor:
+        chunks.append(chunk_helper(chunk))
+
+    return chunks
