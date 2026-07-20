@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.schemas.chunk_backfill import (
     ChunkBackfillResponse,
@@ -15,9 +15,10 @@ from app.services.embedding_backfill_service import (
 )
 from app.services.vector_sync_service import backfill_vectors
 from app.vectorstores.base import VectorStoreError
+from app.dependencies.auth import require_admin
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 @router.post(

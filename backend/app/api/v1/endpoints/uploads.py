@@ -1,6 +1,7 @@
 ﻿
 from fastapi import (
     APIRouter,
+    Depends,
     File,
     Form,
     HTTPException,
@@ -19,9 +20,12 @@ from app.services.document_ingestion_service import (
     DocumentIngestionError,
     process_uploaded_document,
 )
+from app.dependencies.auth import require_editor_or_admin
 
 
-router = APIRouter()
+router = APIRouter(
+    dependencies=[Depends(require_editor_or_admin)],
+)
 
 
 @router.post(

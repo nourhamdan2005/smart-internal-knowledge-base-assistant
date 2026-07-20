@@ -5,6 +5,7 @@ from typing import Any
 
 from app.ai.embedding_client import generate_embedding
 from app.core.config import settings
+from app.core.query_profiling import get_query_profiler
 from app.repositories.document_chunk_repository import (
     get_active_chunks_by_ids,
     get_active_chunks_with_embeddings,
@@ -534,11 +535,25 @@ async def hybrid_search_chunks(
         else settings.retrieval_top_k
     )
 
+    profiler = get_query_profiler()
+
     try:
-        question_embedding = await generate_embedding(
-            cleaned_question
-        )
-    except Exception:
+        if profiler:
+            async with profiler.stage("embedding_ms"):
+                question_embedding = await generate_embedding(cleaned_question)
+            profiler.set(embeddings_used=True)
+        else:
+            question_embedding = await generate_embedding(cleaned_question)
+    except Exception as exc:
+        if profiler:
+            profiler.set(
+                embedding_failed=True,
+                fallback_attempted=True,
+                fallback_path="keyword_only",
+            )
+            # The embedding failure is handled, so it is not the request failure.
+            profiler.timing.failed_stage = None
+            profiler.timing.exception_category = None
         return await search_chunks(
             question=cleaned_question,
             category=category,
@@ -553,11 +568,20 @@ async def hybrid_search_chunks(
             cleaned_question.lower(),
         )
 
-    keyword_candidates = await search_chunk_candidates(
-        keywords=keywords,
-        category=category,
-        limit=settings.retrieval_candidate_limit,
-    )
+    if profiler:
+        async with profiler.stage("keyword_search_ms"):
+            keyword_candidates = await search_chunk_candidates(
+                keywords=keywords,
+                category=category,
+                limit=settings.retrieval_candidate_limit,
+            )
+        profiler.set(retrieved_keyword_candidates=len(keyword_candidates))
+    else:
+        keyword_candidates = await search_chunk_candidates(
+            keywords=keywords,
+            category=category,
+            limit=settings.retrieval_candidate_limit,
+        )
 
     semantic_candidates: list[dict[str, Any]] = []
 
@@ -570,11 +594,21 @@ async def hybrid_search_chunks(
                     "The configured vector store is unavailable."
                 )
 
-            vector_results = await store.search(
-                embedding=question_embedding,
-                category=category,
-                limit=settings.qdrant_semantic_limit,
-            )
+            if profiler:
+                profiler.set(qdrant_used=True, fallback_path="qdrant_hybrid")
+                async with profiler.stage("vector_search_ms"):
+                    vector_results = await store.search(
+                        embedding=question_embedding,
+                        category=category,
+                        limit=settings.qdrant_semantic_limit,
+                    )
+                profiler.set(retrieved_vector_candidates=len(vector_results))
+            else:
+                vector_results = await store.search(
+                    embedding=question_embedding,
+                    category=category,
+                    limit=settings.qdrant_semantic_limit,
+                )
             scores_by_chunk_id: dict[str, float] = {}
 
             for result in vector_results:
@@ -590,10 +624,16 @@ async def hybrid_search_chunks(
                         result.score
                     )
 
-            hydrated_chunks = await get_active_chunks_by_ids(
-                list(scores_by_chunk_id),
-                category=category,
-            )
+            if profiler:
+                async with profiler.stage("mongodb_validation_ms"):
+                    hydrated_chunks = await get_active_chunks_by_ids(
+                        list(scores_by_chunk_id), category=category
+                    )
+                profiler.set(validated_chunks=len(hydrated_chunks))
+            else:
+                hydrated_chunks = await get_active_chunks_by_ids(
+                    list(scores_by_chunk_id), category=category
+                )
 
             semantic_candidates = [
                 {
@@ -620,12 +660,27 @@ async def hybrid_search_chunks(
                 exc_info=True,
             )
 
+            if profiler:
+                profiler.set(
+                    qdrant_failed=True,
+                    fallback_attempted=True,
+                    fallback_path="python_semantic_fallback",
+                )
+                profiler.timing.failed_stage = None
+                profiler.timing.exception_category = None
+
             semantic_candidates = []
 
-            stored_chunks = await get_active_chunks_with_embeddings(
-                category=category,
-                limit=settings.semantic_candidate_limit,
-            )
+            if profiler:
+                async with profiler.stage("mongodb_validation_ms"):
+                    stored_chunks = await get_active_chunks_with_embeddings(
+                        category=category, limit=settings.semantic_candidate_limit
+                    )
+                profiler.set(validated_chunks=len(stored_chunks))
+            else:
+                stored_chunks = await get_active_chunks_with_embeddings(
+                    category=category, limit=settings.semantic_candidate_limit
+                )
 
             for chunk in stored_chunks:
                 chunk_embedding = chunk.get("embedding")
@@ -644,10 +699,17 @@ async def hybrid_search_chunks(
                     }
                 )
     else:
-        stored_chunks = await get_active_chunks_with_embeddings(
-            category=category,
-            limit=settings.semantic_candidate_limit,
-        )
+        if profiler:
+            profiler.set(fallback_path="python_semantic_fallback")
+            async with profiler.stage("mongodb_validation_ms"):
+                stored_chunks = await get_active_chunks_with_embeddings(
+                    category=category, limit=settings.semantic_candidate_limit
+                )
+            profiler.set(validated_chunks=len(stored_chunks))
+        else:
+            stored_chunks = await get_active_chunks_with_embeddings(
+                category=category, limit=settings.semantic_candidate_limit
+            )
 
         for chunk in stored_chunks:
             chunk_embedding = chunk.get("embedding")
@@ -666,9 +728,11 @@ async def hybrid_search_chunks(
                 }
             )
 
+    ranking_timer = profiler.stage("hybrid_ranking_ms") if profiler else None
+    if ranking_timer:
+        ranking_timer.__enter__()
     candidates = merge_chunk_candidates(
-        keyword_candidates=keyword_candidates,
-        semantic_candidates=semantic_candidates,
+        keyword_candidates=keyword_candidates, semantic_candidates=semantic_candidates
     )
 
     scored_chunks: list[
@@ -722,10 +786,18 @@ async def hybrid_search_chunks(
         reverse=True,
     )
 
-    return select_diverse_chunks(
-        scored_chunks=scored_chunks,
-        limit=result_limit,
-    )
+    if ranking_timer:
+        ranking_timer.__exit__(None, None, None)
+
+    if profiler:
+        with profiler.stage("redundancy_filtering_ms"):
+            selected = select_diverse_chunks(
+                scored_chunks=scored_chunks, limit=result_limit
+            )
+        profiler.set(final_context_chunks=len(selected))
+        return selected
+
+    return select_diverse_chunks(scored_chunks=scored_chunks, limit=result_limit)
 
 
 async def search_chunks(
@@ -758,11 +830,20 @@ async def search_chunks(
         else settings.retrieval_top_k
     )
 
-    candidates = await search_chunk_candidates(
-        keywords=keywords,
-        category=category,
-        limit=settings.retrieval_candidate_limit,
-    )
+    profiler = get_query_profiler()
+    if profiler:
+        async with profiler.stage("keyword_search_ms"):
+            candidates = await search_chunk_candidates(
+                keywords=keywords,
+                category=category,
+                limit=settings.retrieval_candidate_limit,
+            )
+        profiler.set(retrieved_keyword_candidates=len(candidates))
+    else:
+        candidates = await search_chunk_candidates(
+            keywords=keywords, category=category,
+            limit=settings.retrieval_candidate_limit,
+        )
 
     scored_chunks: list[
         tuple[int, dict[str, Any]]
@@ -790,7 +871,12 @@ async def search_chunks(
         reverse=True,
     )
 
-    return select_diverse_chunks(
-        scored_chunks=scored_chunks,
-        limit=result_limit,
-    )
+    if profiler:
+        with profiler.stage("redundancy_filtering_ms"):
+            selected = select_diverse_chunks(
+                scored_chunks=scored_chunks, limit=result_limit
+            )
+        profiler.set(final_context_chunks=len(selected))
+        return selected
+
+    return select_diverse_chunks(scored_chunks=scored_chunks, limit=result_limit)

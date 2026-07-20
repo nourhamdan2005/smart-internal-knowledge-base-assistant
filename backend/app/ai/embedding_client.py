@@ -24,7 +24,7 @@ async def generate_embedding(
 
     try:
         response = await client.embeddings(
-            model="nomic-embed-text",
+            model=settings.embedding_model,
             prompt=cleaned_text,
         )
 

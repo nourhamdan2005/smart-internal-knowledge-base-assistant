@@ -1,125 +1,138 @@
-# Smart Internal Knowledge Base Assistant
+# CGC Knowledge AI
 
-An internal-document assistant built with FastAPI, MongoDB, Ollama, and Qdrant. It ingests company documents, creates embedded chunks, retrieves grounded context with hybrid keyword/vector search, and returns answers with authoritative sources.
+Your company knowledge, instantly accessible.
 
-## Phase 8 architecture
+CGC Knowledge AI is an authenticated internal knowledge assistant. It ingests company documents, creates embedded chunks, synchronizes vectors to Qdrant, combines keyword and semantic retrieval, and returns grounded answers with citations.
+
+## Capabilities
+
+- JWT authentication with Employee, Editor, and Admin roles
+- Role-aware dashboard and navigation
+- Grounded AI chat with source citations and local user-scoped history
+- Document catalog, metadata editing, and Admin deletion
+- TXT, Markdown, PDF, and DOCX ingestion
+- Admin user management
+- Health, readiness, and retrieval maintenance tools
+- Light, dark, and system themes
+- Versioned local preferences, offline awareness, reduced-motion support
+- Responsive, keyboard-accessible enterprise UI
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    U[Upload or document API] --> M[(MongoDB)]
-    U --> O[Ollama embeddings]
-    O --> M
-    M --> S[Vector sync service]
-    S --> Q[(Qdrant)]
-    A[Question] --> K[MongoDB keyword retrieval]
-    A --> O
-    O --> Q
-    Q --> H[Hydrate active MongoDB chunks]
-    K --> R[Hybrid ranking and diversity]
-    H --> R
-    R --> L[Grounded answer generation]
+  Browser[Next.js frontend] -->|JWT API requests| API[FastAPI]
+  API --> Mongo[(MongoDB)]
+  API --> Ollama[Ollama]
+  API --> Qdrant[(Qdrant)]
+  Upload[Document upload] --> API
+  Mongo --> Hybrid[Hybrid retrieval]
+  Qdrant --> Hybrid
+  Hybrid --> Ollama
+  Ollama --> API
 ```
 
-- **MongoDB** is authoritative for documents, active chunk state, metadata, content, and stored embeddings.
-- **Qdrant** is a derived, indexed representation used for nearest-neighbor semantic candidate retrieval. Qdrant payloads are never trusted without hydrating active MongoDB chunks.
-- **Ollama** generates `nomic-embed-text` embeddings and runs the configured answer model.
+MongoDB is authoritative for users, documents, chunks, active state, and stored embeddings. Qdrant is a derived semantic index. Qdrant results are rehydrated from MongoDB before use.
 
-Qdrant point IDs are deterministic UUIDs derived from MongoDB chunk IDs. Repeated upserts and vector backfills therefore update existing points instead of creating duplicates.
+See [ARCHITECTURE.md](ARCHITECTURE.md), [DEPLOYMENT.md](DEPLOYMENT.md), and [SECURITY.md](SECURITY.md).
 
-## Local services
+## Roles
 
-Start Qdrant with persistent local storage:
+| Capability | Employee | Editor | Admin |
+| --- | ---: | ---: | ---: |
+| Chat and browse documents | Yes | Yes | Yes |
+| Upload and edit documents | No | Yes | Yes |
+| Delete documents | No | No | Yes |
+| Manage users and maintenance | No | No | Yes |
+
+Backend authorization is authoritative; frontend permissions are user-experience boundaries.
+
+## Prerequisites
+
+- Python 3.12
+- Node.js 22+
+- MongoDB
+- Qdrant
+- Ollama with `llama3.2` and `nomic-embed-text`
 
 ```powershell
-docker run --name knowledge-qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant:latest
+ollama pull llama3.2
+ollama pull nomic-embed-text
 ```
 
-Install and start the backend:
+## Local setup
+
+Backend:
 
 ```powershell
-cd C:\Users\DELL\Desktop\smart-internal-knowledge-base-assistant\backend
+cd backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+Copy-Item .env.example .env
 uvicorn app.main:app --reload
 ```
 
-MongoDB and Ollama must also be running for ingestion and normal question answering.
-
-## Qdrant configuration
-
-Copy `backend/.env.example` to `backend/.env` and configure:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `QDRANT_ENABLED` | `true` | Enables vector-store startup, write synchronization, and Qdrant retrieval. |
-| `QDRANT_URL` | `http://localhost:6333` | Qdrant HTTP endpoint. |
-| `QDRANT_API_KEY` | empty | Optional API key; blank values become `None`. |
-| `QDRANT_COLLECTION_NAME` | `document_chunks` | Vector collection name. |
-| `QDRANT_VECTOR_SIZE` | `768` | Required embedding dimensions. |
-| `QDRANT_DISTANCE` | `cosine` | Distance metric (`cosine`, `dot`, `euclid`, or `manhattan`). |
-| `QDRANT_TIMEOUT_SECONDS` | `10` | Provider request timeout. |
-| `QDRANT_SEMANTIC_LIMIT` | `30` | Semantic candidates requested per query. |
-| `QDRANT_BATCH_SIZE` | `100` | Maximum points per upsert batch. |
-| `QDRANT_SYNC_ON_WRITE` | `true` | Synchronizes successful document writes to Qdrant. |
-| `QDRANT_FALLBACK_ENABLED` | `true` | Keeps startup and queries operational when Qdrant is unavailable. |
-
-All limits, vector size, batch size, and timeout values must be positive. Existing hybrid weights and relevance thresholds remain configurable independently.
-
-## Synchronization behavior
-
-- **Create/upload:** MongoDB document and embedded chunks are created first, then the new chunks are upserted into Qdrant.
-- **Update:** old MongoDB chunks are deactivated, replacement chunks are created, old document vectors are removed, and replacement vectors are upserted.
-- **Delete:** the MongoDB document/chunks are deactivated and Qdrant points for the document are removed idempotently.
-- **Fallback-enabled synchronization failure:** valid MongoDB state is preserved and the failure is logged. Stale Qdrant points cannot be returned because query results are rehydrated and checked against active MongoDB chunks.
-- **Mandatory Qdrant:** when fallback is disabled, synchronization/retrieval failures raise controlled service errors and lifecycle rollback follows the existing MongoDB rules.
-- **Embedding/chunk maintenance:** these jobs update MongoDB. Run the vector backfill afterward to make Qdrant exactly reflect all eligible active chunks.
-
-Backfill all valid active vectors idempotently:
+Frontend:
 
 ```powershell
-Invoke-RestMethod -Method Post -Uri http://localhost:8000/maintenance/backfill-vectors
+cd frontend
+npm ci
+Copy-Item .env.example .env.local
+npm run dev
 ```
 
-## Query fallback
+Default local endpoints:
 
-The normal query path generates one question embedding, retrieves keyword candidates from MongoDB, retrieves semantic candidates from Qdrant, hydrates current active chunks from MongoDB, merges by chunk ID, applies hybrid weights and thresholds, removes redundant context, enforces document diversity, and sends grounded context to the answer model.
+- Frontend: `http://localhost:3000`
+- Backend/OpenAPI: `http://localhost:8000` and `/docs`
+- Qdrant: `http://localhost:6333`
+- Ollama: `http://localhost:11434`
 
-If Qdrant is disabled, the existing local Python semantic retrieval is used. If Qdrant is unavailable and fallback is enabled, the application logs a warning and uses local semantic retrieval; keyword retrieval remains available. If question embedding generation fails, retrieval degrades to keyword-only. If fallback is disabled, the query endpoint returns HTTP 503 without exposing provider details.
+Generate a production JWT secret:
 
-`GET /health` remains a basic liveness endpoint. `GET /ready` reports Qdrant as `ready`, `disabled`, or `unavailable`; fallback-enabled unavailability reports a degraded but operational application.
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(64))"
+```
+
+Configure bootstrap Admin credentials in `backend/.env`; startup creates the account only when it does not exist. Remove the bootstrap password after initial provisioning.
 
 ## Verification
 
-Inspect collection information and point count:
-
 ```powershell
-Invoke-RestMethod http://localhost:6333/collections/document_chunks
-Invoke-RestMethod http://localhost:6333/collections/document_chunks/points/count -Method Post -ContentType 'application/json' -Body '{"exact":true}'
-```
-
-Upload a document and ask a question:
-
-```powershell
-Set-Content -Path .\phase8-policy.txt -Value 'Remote work requires manager approval.'
-curl.exe -X POST http://localhost:8000/uploads/ -F "file=@phase8-policy.txt" -F "category=HR"
-$body = @{ question = 'What is the remote work policy?'; category = 'HR' } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri http://localhost:8000/query/ -ContentType 'application/json' -Body $body
-```
-
-Test fallback by stopping Qdrant and repeating the query:
-
-```powershell
-docker stop knowledge-qdrant
-Invoke-RestMethod -Method Post -Uri http://localhost:8000/query/ -ContentType 'application/json' -Body $body
-docker start knowledge-qdrant
-```
-
-Run automated verification:
-
-```powershell
-cd C:\Users\DELL\Desktop\smart-internal-knowledge-base-assistant\backend
+cd backend
 .\venv\Scripts\python.exe -m pytest -q
-.\venv\Scripts\python.exe -m pytest tests\test_qdrant_store.py tests\test_vector_backfill.py tests\test_vector_lifecycle.py tests\test_qdrant_retrieval.py tests\test_query_service.py tests\test_search_repository.py tests\test_vector_startup.py -v
-.\venv\Scripts\python.exe -c "from app.main import app; print('Application imports successfully')"
+.\venv\Scripts\python.exe -c "from app.main import app; print(app.title)"
+
+cd ..\frontend
+npm run lint
+npx tsc --noEmit
+npm run build
+npm run start
 ```
+
+## Known limitations
+
+- JWTs are stored in browser storage; migrate to secure HTTP-only cookies for stronger production protection.
+- No refresh-token or self-service password-reset flow exists.
+- Profile changes are Admin-managed.
+- Preferences and chat history are browser-local.
+- Maintenance history is current-session only.
+- Detailed MongoDB and Ollama component health is not exposed.
+- Ollama is expected to run on the host unless deployment architecture explicitly changes.
+
+## Production checklist
+
+- [ ] Unique JWT secret of at least 32 characters
+- [ ] Bootstrap credentials removed or rotated
+- [ ] Exact production CORS origins
+- [ ] Production frontend and API URLs
+- [ ] Persistent MongoDB and Qdrant storage
+- [ ] Required Ollama models available
+- [ ] `/health` and `/ready` pass
+- [ ] Embedding/vector backfills complete
+- [ ] Frontend build and backend tests pass
+- [ ] Roles, uploads, citations, and logout verified
+- [ ] Backups, logs, monitoring, and TLS configured
+
+The next activity is the separately authorized final full-system test matrix.

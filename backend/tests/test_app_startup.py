@@ -13,6 +13,10 @@ def test_fastapi_application_loads_all_routes():
     assert "/health" in route_paths
     assert "/uploads/" in route_paths
     assert "/query/" in route_paths
+    assert "/auth/login" in route_paths
+    assert "/auth/me" in route_paths
+    assert "/users" in route_paths
+    assert "/documents" in route_paths
     assert (
         "/maintenance/backfill-chunks"
         in route_paths

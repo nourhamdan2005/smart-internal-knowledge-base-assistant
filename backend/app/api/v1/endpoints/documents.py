@@ -1,13 +1,21 @@
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.dependencies.auth import (
+    require_admin,
+    require_authenticated,
+    require_editor_or_admin,
+)
 from app.schemas.document import DocumentCreate, DocumentResponse, DocumentUpdate
 from app.services import document_service
 
-router = APIRouter(prefix="/documents", tags=["Documents"])
+router = APIRouter(tags=["Documents"])
 
 
 @router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
-async def create_document(document: DocumentCreate):
+async def create_document(
+    document: DocumentCreate,
+    _current_user=Depends(require_editor_or_admin),
+):
     return await document_service.create_document(document)
 
 
@@ -18,6 +26,7 @@ async def get_documents(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=10, ge=1, le=100),
     sort: str = Query(default="-created_at"),
+    _current_user=Depends(require_authenticated),
 ):
     return await document_service.get_documents(
         category=category,
@@ -29,7 +38,10 @@ async def get_documents(
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
-async def get_document_by_id(document_id: str):
+async def get_document_by_id(
+    document_id: str,
+    _current_user=Depends(require_authenticated),
+):
     document = await document_service.get_document_by_id(document_id)
 
     if not document:
@@ -39,7 +51,11 @@ async def get_document_by_id(document_id: str):
 
 
 @router.patch("/{document_id}", response_model=DocumentResponse)
-async def update_document(document_id: str, document: DocumentUpdate):
+async def update_document(
+    document_id: str,
+    document: DocumentUpdate,
+    _current_user=Depends(require_editor_or_admin),
+):
     updated_document = await document_service.update_document(document_id, document)
 
     if not updated_document:
@@ -49,7 +65,10 @@ async def update_document(document_id: str, document: DocumentUpdate):
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_document(document_id: str):
+async def delete_document(
+    document_id: str,
+    _current_user=Depends(require_admin),
+):
     deleted = await document_service.delete_document(document_id)
 
     if not deleted:

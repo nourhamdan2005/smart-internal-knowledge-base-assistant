@@ -1,0 +1,137 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: smart-kb-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: smart-kb-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --quiet --tries=1 --spider http://localhost:6333/readyz || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: smart-kb-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      CORS_ALLOWED_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+
+      MONGODB_URL: mongodb://mongodb:27017
+      MONGODB_DB_NAME: smart_knowledge_base
+
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: llama3.2
+      EMBEDDING_MODEL: nomic-embed-text
+
+      OLLAMA_GENERATION_NUM_PREDICT: "192"
+      OLLAMA_GENERATION_NUM_CTX: "4096"
+      OLLAMA_GENERATION_TEMPERATURE: "0.2"
+      OLLAMA_GENERATION_TOP_P: "0.9"
+      OLLAMA_GENERATION_TOP_K: "40"
+      OLLAMA_GENERATION_REPEAT_PENALTY: "1.1"
+      OLLAMA_KEEP_ALIVE: 5m
+      OLLAMA_REQUEST_TIMEOUT_SECONDS: "180"
+      QUERY_STREAMING_ENABLED: "true"
+
+      RETRIEVAL_TOP_K: "5"
+      RETRIEVAL_MIN_SCORE: "8"
+      RETRIEVAL_CANDIDATE_LIMIT: "50"
+      RETRIEVAL_MAX_CHUNKS_PER_DOCUMENT: "2"
+      RETRIEVAL_OVERLAP_THRESHOLD: "0.65"
+      RETRIEVAL_SIMILARITY_THRESHOLD: "0.85"
+
+      HYBRID_KEYWORD_WEIGHT: "0.4"
+      HYBRID_SEMANTIC_WEIGHT: "0.6"
+      SEMANTIC_MIN_SIMILARITY: "0.25"
+      SEMANTIC_CANDIDATE_LIMIT: "100"
+
+      QDRANT_ENABLED: "true"
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION_NAME: document_chunks
+      QDRANT_VECTOR_SIZE: "768"
+      QDRANT_DISTANCE: cosine
+      QDRANT_TIMEOUT_SECONDS: "10"
+      QDRANT_SEMANTIC_LIMIT: "30"
+      QDRANT_BATCH_SIZE: "100"
+      QDRANT_SYNC_ON_WRITE: "true"
+      QDRANT_FALLBACK_ENABLED: "true"
+
+      AUTH_ENABLED: "true"
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
+      BOOTSTRAP_ADMIN_FULL_NAME: ${BOOTSTRAP_ADMIN_FULL_NAME:-System Administrator}
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_APP_URL: http://localhost:3000
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    container_name: smart-kb-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mongodb_data:
+  qdrant_data:

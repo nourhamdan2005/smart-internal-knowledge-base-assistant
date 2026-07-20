@@ -74,6 +74,24 @@ DOCUMENT_CHUNK_INDEXES = [
 ]
 
 
+USER_INDEXES = [
+    IndexModel(
+        [
+            ("email", ASCENDING),
+        ],
+        name="users_email_unique_idx",
+        unique=True,
+    ),
+    IndexModel(
+        [
+            ("role", ASCENDING),
+            ("is_active", ASCENDING),
+        ],
+        name="users_role_active_idx",
+    ),
+]
+
+
 async def create_database_indexes() -> dict[str, list[str]]:
     """
     Create all required MongoDB indexes.
@@ -83,6 +101,7 @@ async def create_database_indexes() -> dict[str, list[str]]:
     """
     documents_collection = database["documents"]
     chunks_collection = database["document_chunks"]
+    users_collection = database["users"]
 
     document_index_names = (
         await documents_collection.create_indexes(
@@ -96,9 +115,14 @@ async def create_database_indexes() -> dict[str, list[str]]:
         )
     )
 
+    user_index_names = await users_collection.create_indexes(
+        USER_INDEXES
+    )
+
     return {
         "documents": document_index_names,
         "document_chunks": chunk_index_names,
+        "users": user_index_names,
     }
 
 
@@ -111,6 +135,7 @@ async def get_database_index_information() -> dict[
     """
     documents_collection = database["documents"]
     chunks_collection = database["document_chunks"]
+    users_collection = database["users"]
 
     return {
         "documents": (
@@ -119,6 +144,7 @@ async def get_database_index_information() -> dict[
         "document_chunks": (
             await chunks_collection.index_information()
         ),
+        "users": await users_collection.index_information(),
     }
 async def explain_active_chunk_lookup(
     document_id: str,
