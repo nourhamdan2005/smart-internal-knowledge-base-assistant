@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
     embedding_model: str = "nomic-embed-text"
+
+    llm_provider: str = "ollama"
+
+    groq_api_key: str | None = None
+    groq_model: str = "openai/gpt-oss-20b"
+    groq_request_timeout_seconds: float = Field(default=60, gt=0)
+
     ollama_generation_num_predict: int = Field(default=192, gt=0)
     ollama_generation_num_ctx: int = Field(default=4096, gt=0)
     ollama_generation_temperature: float = Field(default=0.2, ge=0, le=2)
@@ -85,6 +92,7 @@ class Settings(BaseSettings):
         "jwt_secret_key",
         "bootstrap_admin_email",
         "bootstrap_admin_password",
+        "groq_api_key",
         mode="before",
     )
     @classmethod
