@@ -9,20 +9,22 @@ from app.schemas.query import QueryRequest
 
 @pytest.mark.asyncio
 async def test_generate_answer_returns_content(monkeypatch):
-    async def fake_chat(*args, **kwargs):
-        return {
-            "message": {
-                "content": (
-                    "Employees may work remotely "
-                    "with manager approval."
-                )
-            }
-        }
+    async def fake_generate_groq(*args, **kwargs):
+        return (
+            "Employees may work remotely "
+            "with manager approval."
+        )
 
     monkeypatch.setattr(
-        openai_client.client,
-        "chat",
-        fake_chat,
+        openai_client.settings,
+        "llm_provider",
+        "groq",
+    )
+
+    monkeypatch.setattr(
+        openai_client,
+        "_generate_groq",
+        fake_generate_groq,
     )
 
     result = await openai_client.generate_answer(
@@ -41,17 +43,19 @@ async def test_generate_answer_returns_content(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generate_answer_rejects_empty_response(monkeypatch):
-    async def fake_chat(*args, **kwargs):
-        return {
-            "message": {
-                "content": ""
-            }
-        }
+    async def fake_generate_groq(*args, **kwargs):
+        return ""
 
     monkeypatch.setattr(
-        openai_client.client,
-        "chat",
-        fake_chat,
+        openai_client.settings,
+        "llm_provider",
+        "groq",
+    )
+
+    monkeypatch.setattr(
+        openai_client,
+        "_generate_groq",
+        fake_generate_groq,
     )
 
     with pytest.raises(
@@ -66,15 +70,21 @@ async def test_generate_answer_rejects_empty_response(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generate_answer_handles_timeout(monkeypatch):
-    async def fake_chat(*args, **kwargs):
+    async def fake_generate_groq(*args, **kwargs):
         raise httpx.ReadTimeout(
             "Request timed out",
         )
 
     monkeypatch.setattr(
-        openai_client.client,
-        "chat",
-        fake_chat,
+        openai_client.settings,
+        "llm_provider",
+        "groq",
+    )
+
+    monkeypatch.setattr(
+        openai_client,
+        "_generate_groq",
+        fake_generate_groq,
     )
 
     with pytest.raises(
@@ -93,19 +103,25 @@ async def test_generate_answer_handles_connection_error(
 ):
     request = httpx.Request(
         "POST",
-        "http://127.0.0.1:11434/api/chat",
+        "https://api.groq.com/openai/v1/chat/completions",
     )
 
-    async def fake_chat(*args, **kwargs):
+    async def fake_generate_groq(*args, **kwargs):
         raise httpx.ConnectError(
             "Connection refused",
             request=request,
         )
 
     monkeypatch.setattr(
-        openai_client.client,
-        "chat",
-        fake_chat,
+        openai_client.settings,
+        "llm_provider",
+        "groq",
+    )
+
+    monkeypatch.setattr(
+        openai_client,
+        "_generate_groq",
+        fake_generate_groq,
     )
 
     with pytest.raises(
