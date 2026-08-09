@@ -7,6 +7,12 @@ from app.services import document_chunk_service
 async def test_create_chunks_generates_embeddings(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        document_chunk_service.settings,
+        "embedding_model",
+        "nomic-embed-text",
+    )
+
     document = {
         "id": "doc-1",
         "title": "Security Policy",

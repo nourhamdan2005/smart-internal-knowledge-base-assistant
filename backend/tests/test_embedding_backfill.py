@@ -23,7 +23,13 @@ def make_chunk(
     }
 
 
-def test_chunk_has_valid_embedding():
+def test_chunk_has_valid_embedding(monkeypatch):
+    monkeypatch.setattr(
+        embedding_backfill_service.settings,
+        "embedding_model",
+        "nomic-embed-text",
+    )
+
     chunk = make_chunk(
         chunk_id="chunk-1",
         embedding=[0.1, 0.2, 0.3],
@@ -52,6 +58,12 @@ def test_chunk_without_embedding_is_invalid():
 async def test_embedding_backfill_processes_missing_embeddings(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        embedding_backfill_service.settings,
+        "embedding_model",
+        "nomic-embed-text",
+    )
+
     chunks = [
         make_chunk("chunk-1"),
         make_chunk(
@@ -195,6 +207,12 @@ async def test_embedding_backfill_handles_empty_database(
 async def test_embedding_backfill_is_idempotent(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        embedding_backfill_service.settings,
+        "embedding_model",
+        "nomic-embed-text",
+    )
+
     chunks = [
         make_chunk(
             "chunk-1",
