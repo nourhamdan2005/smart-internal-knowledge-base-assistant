@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     cors_allowed_origins: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://smart-internal-knowledge-base-assis.vercel.app",
     ]
 
     mongodb_url: str = "mongodb://localhost:27017"
