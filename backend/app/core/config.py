@@ -14,7 +14,15 @@ class Settings(BaseSettings):
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
+    embedding_provider: str = "ollama"
     embedding_model: str = "nomic-embed-text"
+
+    gemini_api_key: str | None = None
+    gemini_embedding_model: str = "gemini-embedding-001"
+    gemini_embedding_dimensions: int = Field(
+        default=768,
+        gt=0,
+    )
 
     llm_provider: str = "ollama"
 
@@ -93,6 +101,7 @@ class Settings(BaseSettings):
         "bootstrap_admin_email",
         "bootstrap_admin_password",
         "groq_api_key",
+        "gemini_api_key",
         mode="before",
     )
     @classmethod
